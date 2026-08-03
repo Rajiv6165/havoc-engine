@@ -1,0 +1,2 @@
+kubeconfig: "~/.kube/config"
+default_namespace: "default"
