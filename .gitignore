@@ -1,0 +1,7 @@
+# Binaries
+/*.exe
+/havoc-engine
+
+# Output / Test artifacts
+*.test
+*.out

@@ -1,0 +1,138 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/spf13/cobra"
+
+	"havoc-engine/internal/config"
+	"havoc-engine/internal/experiments"
+	"havoc-engine/internal/k8sclient"
+)
+
+var (
+	configPath string
+	namespace  string
+)
+
+func main() {
+	rootCmd := &cobra.Command{
+		Use:   "havoc-engine",
+		Short: "Havoc Engine is a Kubernetes chaos engineering CLI tool",
+	}
+
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", "config.yaml", "Path to config YAML file")
+	rootCmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "", "Kubernetes namespace (defaults to config default_namespace)")
+
+	// kill-pod command
+	var selector string
+	killPodCmd := &cobra.Command{
+		Use:   "kill-pod",
+		Short: "Delete a random pod matching the selector",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			ns := resolveNamespace(namespace, cfg.DefaultNamespace)
+			client, err := k8sclient.NewClient(cfg.Kubeconfig)
+			if err != nil {
+				return fmt.Errorf("failed to create k8s client: %w", err)
+			}
+
+			deletedPod, err := experiments.KillPod(context.Background(), client, ns, selector)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Successfully killed pod %q in namespace %q\n", deletedPod, ns)
+			return nil
+		},
+	}
+	killPodCmd.Flags().StringVarP(&selector, "selector", "s", "", "Label selector (e.g. app=demo)")
+	_ = killPodCmd.MarkFlagRequired("selector")
+
+	// inject-latency command
+	var (
+		podName string
+		delayMs int
+	)
+	injectLatencyCmd := &cobra.Command{
+		Use:   "inject-latency",
+		Short: "Inject network delay into a target pod using tc/netem via an ephemeral container",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			ns := resolveNamespace(namespace, cfg.DefaultNamespace)
+			client, err := k8sclient.NewClient(cfg.Kubeconfig)
+			if err != nil {
+				return fmt.Errorf("failed to create k8s client: %w", err)
+			}
+
+			err = experiments.InjectLatency(context.Background(), client, ns, podName, delayMs)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Successfully injected %dms network delay into pod %q in namespace %q\n", delayMs, podName, ns)
+			return nil
+		},
+	}
+	injectLatencyCmd.Flags().StringVarP(&podName, "pod", "p", "", "Target pod name")
+	injectLatencyCmd.Flags().IntVarP(&delayMs, "delay", "d", 0, "Delay duration in milliseconds")
+	_ = injectLatencyCmd.MarkFlagRequired("pod")
+	_ = injectLatencyCmd.MarkFlagRequired("delay")
+
+	// spike-cpu command
+	var durationSec int
+	spikeCPUCmd := &cobra.Command{
+		Use:   "spike-cpu",
+		Short: "Stresses CPU inside a target pod using a stress-ng ephemeral container",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			ns := resolveNamespace(namespace, cfg.DefaultNamespace)
+			client, err := k8sclient.NewClient(cfg.Kubeconfig)
+			if err != nil {
+				return fmt.Errorf("failed to create k8s client: %w", err)
+			}
+
+			err = experiments.SpikeCPU(context.Background(), client, ns, podName, durationSec)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Successfully injected CPU stress (%ds) into pod %q in namespace %q\n", durationSec, podName, ns)
+			return nil
+		},
+	}
+	spikeCPUCmd.Flags().StringVarP(&podName, "pod", "p", "", "Target pod name")
+	spikeCPUCmd.Flags().IntVarP(&durationSec, "duration", "t", 0, "Stress duration in seconds")
+	_ = spikeCPUCmd.MarkFlagRequired("pod")
+	_ = spikeCPUCmd.MarkFlagRequired("duration")
+
+	rootCmd.AddCommand(killPodCmd, injectLatencyCmd, spikeCPUCmd)
+
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+func resolveNamespace(flagNs, defaultNs string) string {
+	if flagNs != "" {
+		return flagNs
+	}
+	if defaultNs != "" {
+		return defaultNs
+	}
+	return "default"
+}
