@@ -12,24 +12,46 @@
 
 ---
 
+## Safety & Guardrails 🛡️
+
+`havoc-engine` includes built-in safety guardrails implemented as a middleware layer in `internal/safety/` to prevent unexpected outages during chaos experiments:
+
+1. **Blast Radius Limit**:
+   - Ensures chaos experiments never impact more than a configurable percentage of workload pods matching the label selector in a namespace (default **30%**).
+   - If an experiment would affect more than the configured percentage (e.g., targeting 1 pod in a 2-replica deployment = 50%), execution is automatically blocked before any cluster changes occur.
+
+2. **Auto-Abort & Rollback**:
+   - Accepts a `MetricsChecker` interface (pluggable for Prometheus or custom metrics sources) that monitors system error rates.
+   - If the error rate exceeds the configurable threshold (`abortOnErrorRatePercent`, default **5.0%**) before or mid-experiment, `havoc-engine` immediately aborts execution and attempts an automatic rollback (e.g. removing injected latency or CPU stress ephemeral containers).
+
+3. **Dry-Run Mode (`--dry-run`)**:
+   - Every CLI command supports a `--dry-run` flag.
+   - When enabled, `havoc-engine` logs exactly what action *would* take place (which pod would be targeted, how much delay or CPU stress would be injected) without making any modifying Kubernetes API calls.
+
+---
+
 ## Project Structure
 
 ```text
 havoc-engine/
 ├── cmd/
 │   └── havoc-engine/
-│       └── main.go          # CLI entrypoint and Cobra command wiring
+│       └── main.go          # CLI entrypoint, flags, and Cobra command wiring
 ├── internal/
 │   ├── config/              # YAML configuration loader (config.yaml)
 │   ├── k8sclient/           # Out-of-cluster / In-cluster Kubernetes client initializer
-│   └── experiments/         # Chaos experiment implementations and unit tests
+│   ├── safety/              # Safety middleware (blast radius limit, auto-abort, dry-run mode)
+│   │   ├── safety.go
+│   │   └── safety_test.go
+│   └── experiments/         # Chaos experiment implementations, rollback helpers, and tests
 │       ├── kill_pod.go
 │       ├── kill_pod_test.go
 │       ├── inject_latency.go
 │       ├── inject_latency_test.go
 │       ├── spike_cpu.go
-│       └── spike_cpu_test.go
-├── config.yaml              # Cluster connection settings (kubeconfig path, default namespace)
+│       ├── spike_cpu_test.go
+│       └── rollback.go
+├── config.yaml              # Connection and safety configuration settings
 ├── go.mod
 ├── go.sum
 └── README.md
@@ -47,11 +69,13 @@ havoc-engine/
 
 ## Configuration
 
-`havoc-engine` uses `config.yaml` to specify default cluster connection settings:
+`havoc-engine` uses `config.yaml` to specify connection and safety threshold settings:
 
 ```yaml
 kubeconfig: "~/.kube/config"
 default_namespace: "default"
+maxBlastRadiusPercent: 30
+abortOnErrorRatePercent: 5.0
 ```
 
 You can pass a custom config file using the `--config` global flag:
@@ -64,7 +88,7 @@ havoc-engine --config=/path/to/custom-config.yaml <command>
 
 ## Running Unit Tests
 
-`havoc-engine` relies on a clean, testable architecture using Kubernetes fake clientsets (`k8s.io/client-go/kubernetes/fake`). All unit tests run locally without requiring a live cluster:
+`havoc-engine` relies on a clean, testable architecture using Kubernetes fake clientsets (`k8s.io/client-go/kubernetes/fake`). All unit tests (including safety middleware tests) run locally without requiring a live cluster:
 
 ```bash
 go test -v ./...
@@ -84,7 +108,7 @@ minikube start
 k3d cluster create havoc-cluster
 
 # Deploy a demo workload
-kubectl create deployment demo --image=nginx --replicas=3
+kubectl create deployment demo --image=nginx --replicas=4
 kubectl get pods -l app=demo
 ```
 
@@ -97,6 +121,14 @@ Build the binary or run directly via `go run ./cmd/havoc-engine`:
 #### Build Binary:
 ```bash
 go build -o havoc-engine ./cmd/havoc-engine
+```
+
+#### Dry-Run Mode (Simulation):
+Test any command safely without executing mutations:
+
+```bash
+./havoc-engine kill-pod --namespace=default --selector=app=demo --dry-run
+./havoc-engine inject-latency --namespace=default --pod=demo-pod-name --delay=500 --dry-run
 ```
 
 #### Experiment 1: Kill a Pod
@@ -135,6 +167,7 @@ Available Commands:
 
 Flags:
       --config string      Path to config YAML file (default "config.yaml")
+      --dry-run            Simulate execution without making actual changes
   -h, --help               help for havoc-engine
   -n, --namespace string   Kubernetes namespace (defaults to config default_namespace)
 ```

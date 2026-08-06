@@ -1,2 +1,4 @@
 kubeconfig: "~/.kube/config"
 default_namespace: "default"
+maxBlastRadiusPercent: 30
+abortOnErrorRatePercent: 5.0
