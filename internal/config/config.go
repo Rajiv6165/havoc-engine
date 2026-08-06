@@ -8,16 +8,20 @@ import (
 )
 
 type Config struct {
-	Kubeconfig       string `yaml:"kubeconfig"`
-	DefaultNamespace string `yaml:"default_namespace"`
+	Kubeconfig              string  `yaml:"kubeconfig"`
+	DefaultNamespace        string  `yaml:"default_namespace"`
+	MaxBlastRadiusPercent   float64 `yaml:"maxBlastRadiusPercent"`
+	AbortOnErrorRatePercent float64 `yaml:"abortOnErrorRatePercent"`
 }
 
 // LoadConfig reads configuration from the given file path.
 // If the file does not exist, default values are returned.
 func LoadConfig(path string) (*Config, error) {
 	cfg := &Config{
-		Kubeconfig:       getDefaultKubeconfigPath(),
-		DefaultNamespace: "default",
+		Kubeconfig:              getDefaultKubeconfigPath(),
+		DefaultNamespace:        "default",
+		MaxBlastRadiusPercent:   30.0,
+		AbortOnErrorRatePercent: 5.0,
 	}
 
 	if path == "" {
@@ -34,6 +38,13 @@ func LoadConfig(path string) (*Config, error) {
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+
+	if cfg.MaxBlastRadiusPercent <= 0 {
+		cfg.MaxBlastRadiusPercent = 30.0
+	}
+	if cfg.AbortOnErrorRatePercent <= 0 {
+		cfg.AbortOnErrorRatePercent = 5.0
 	}
 
 	cfg.Kubeconfig = expandHomePath(cfg.Kubeconfig)
