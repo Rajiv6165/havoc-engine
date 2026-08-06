@@ -36,4 +36,10 @@ func TestLoadConfig_NonExistentFile(t *testing.T) {
 	if cfg.DefaultNamespace != "default" {
 		t.Errorf("expected default namespace 'default', got '%s'", cfg.DefaultNamespace)
 	}
+	if cfg.MaxBlastRadiusPercent != 30.0 {
+		t.Errorf("expected default MaxBlastRadiusPercent 30.0, got %f", cfg.MaxBlastRadiusPercent)
+	}
+	if cfg.AbortOnErrorRatePercent != 5.0 {
+		t.Errorf("expected default AbortOnErrorRatePercent 5.0, got %f", cfg.AbortOnErrorRatePercent)
+	}
 }
