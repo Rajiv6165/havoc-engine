@@ -8,13 +8,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"havoc-engine/internal/config"
-	"havoc-engine/internal/experiments"
 	"havoc-engine/internal/k8sclient"
+	"havoc-engine/internal/safety"
 )
 
 var (
 	configPath string
 	namespace  string
+	dryRun     bool
 )
 
 func main() {
@@ -25,6 +26,7 @@ func main() {
 
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "config.yaml", "Path to config YAML file")
 	rootCmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "", "Kubernetes namespace (defaults to config default_namespace)")
+	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Simulate execution without making actual changes")
 
 	// kill-pod command
 	var selector string
@@ -39,16 +41,19 @@ func main() {
 
 			ns := resolveNamespace(namespace, cfg.DefaultNamespace)
 			client, err := k8sclient.NewClient(cfg.Kubeconfig)
-			if err != nil {
+			if err != nil && !dryRun {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			deletedPod, err := experiments.KillPod(context.Background(), client, ns, selector)
+			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, nil)
+			deletedPod, err := runner.ExecuteKillPod(context.Background(), ns, selector)
 			if err != nil {
 				return err
 			}
 
-			fmt.Printf("Successfully killed pod %q in namespace %q\n", deletedPod, ns)
+			if !dryRun {
+				fmt.Printf("Successfully killed pod %q in namespace %q\n", deletedPod, ns)
+			}
 			return nil
 		},
 	}
@@ -71,16 +76,19 @@ func main() {
 
 			ns := resolveNamespace(namespace, cfg.DefaultNamespace)
 			client, err := k8sclient.NewClient(cfg.Kubeconfig)
-			if err != nil {
+			if err != nil && !dryRun {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			err = experiments.InjectLatency(context.Background(), client, ns, podName, delayMs)
+			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, nil)
+			err = runner.ExecuteInjectLatency(context.Background(), ns, podName, delayMs)
 			if err != nil {
 				return err
 			}
 
-			fmt.Printf("Successfully injected %dms network delay into pod %q in namespace %q\n", delayMs, podName, ns)
+			if !dryRun {
+				fmt.Printf("Successfully injected %dms network delay into pod %q in namespace %q\n", delayMs, podName, ns)
+			}
 			return nil
 		},
 	}
@@ -102,16 +110,19 @@ func main() {
 
 			ns := resolveNamespace(namespace, cfg.DefaultNamespace)
 			client, err := k8sclient.NewClient(cfg.Kubeconfig)
-			if err != nil {
+			if err != nil && !dryRun {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			err = experiments.SpikeCPU(context.Background(), client, ns, podName, durationSec)
+			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, nil)
+			err = runner.ExecuteSpikeCPU(context.Background(), ns, podName, durationSec)
 			if err != nil {
 				return err
 			}
 
-			fmt.Printf("Successfully injected CPU stress (%ds) into pod %q in namespace %q\n", durationSec, podName, ns)
+			if !dryRun {
+				fmt.Printf("Successfully injected CPU stress (%ds) into pod %q in namespace %q\n", durationSec, podName, ns)
+			}
 			return nil
 		},
 	}
