@@ -9,6 +9,7 @@ import (
 
 	"havoc-engine/internal/config"
 	"havoc-engine/internal/k8sclient"
+	"havoc-engine/internal/metrics"
 	"havoc-engine/internal/safety"
 )
 
@@ -23,6 +24,12 @@ func main() {
 		Use:   "havoc-engine",
 		Short: "Havoc Engine is a Kubernetes chaos engineering CLI tool",
 	}
+
+	// Start metrics server in the background
+	metrics.StartMetricsServer(9090)
+	
+	// Initialize Prometheus metrics checker with a base simulated error rate
+	metricsChecker := metrics.NewPrometheusMetricsChecker(2.0)
 
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "config.yaml", "Path to config YAML file")
 	rootCmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "", "Kubernetes namespace (defaults to config default_namespace)")
@@ -45,7 +52,7 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, nil)
+			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metricsChecker)
 			deletedPod, err := runner.ExecuteKillPod(context.Background(), ns, selector)
 			if err != nil {
 				return err
@@ -80,7 +87,7 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, nil)
+			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metricsChecker)
 			err = runner.ExecuteInjectLatency(context.Background(), ns, podName, delayMs)
 			if err != nil {
 				return err
@@ -114,7 +121,7 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, nil)
+			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metricsChecker)
 			err = runner.ExecuteSpikeCPU(context.Background(), ns, podName, durationSec)
 			if err != nil {
 				return err
@@ -131,7 +138,18 @@ func main() {
 	_ = spikeCPUCmd.MarkFlagRequired("pod")
 	_ = spikeCPUCmd.MarkFlagRequired("duration")
 
-	rootCmd.AddCommand(killPodCmd, injectLatencyCmd, spikeCPUCmd)
+	// serve command
+	serveCmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Start the engine in server mode (keeps metrics endpoint alive)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Println("Havoc Engine is running in server mode. Metrics available at :9090/metrics")
+			// Block indefinitely to keep the server alive
+			select {}
+		},
+	}
+
+	rootCmd.AddCommand(killPodCmd, injectLatencyCmd, spikeCPUCmd, serveCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

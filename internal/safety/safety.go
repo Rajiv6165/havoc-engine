@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 
 	"havoc-engine/internal/experiments"
+	"havoc-engine/internal/metrics"
 )
 
 // MetricsChecker defines an interface for fetching real-time metrics (e.g. error rate).
@@ -148,21 +152,31 @@ func (r *SafetyRunner) ExecuteKillPod(ctx context.Context, namespace, labelSelec
 	}
 
 	if err := CheckBlastRadiusBySelector(ctx, r.client, namespace, labelSelector, 1, r.maxBlastRadiusPercent); err != nil {
+		metrics.ExperimentsTotal.WithLabelValues("kill_pod", "blocked").Inc()
 		return "", err
 	}
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
+		metrics.ExperimentsTotal.WithLabelValues("kill_pod", "aborted").Inc()
 		return "", err
 	}
 
+	killTime := time.Now()
 	deletedPod, err := experiments.KillPod(ctx, r.client, namespace, labelSelector)
 	if err != nil {
+		metrics.ExperimentsTotal.WithLabelValues("kill_pod", "failed").Inc()
 		return "", err
 	}
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
+		metrics.ExperimentsTotal.WithLabelValues("kill_pod", "aborted").Inc()
 		return deletedPod, fmt.Errorf("auto-abort triggered post-execution: %w", err)
 	}
+
+	metrics.ExperimentsTotal.WithLabelValues("kill_pod", "success").Inc()
+
+	// Watch for pod recovery in the background
+	go watchPodRecovery(context.Background(), r.client, namespace, labelSelector, killTime)
 
 	return deletedPod, nil
 }
@@ -175,22 +189,27 @@ func (r *SafetyRunner) ExecuteInjectLatency(ctx context.Context, namespace, podN
 	}
 
 	if err := CheckBlastRadiusByPodName(ctx, r.client, namespace, podName, 1, r.maxBlastRadiusPercent); err != nil {
+		metrics.ExperimentsTotal.WithLabelValues("inject_latency", "blocked").Inc()
 		return err
 	}
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
+		metrics.ExperimentsTotal.WithLabelValues("inject_latency", "aborted").Inc()
 		return err
 	}
 
 	if err := experiments.InjectLatency(ctx, r.client, namespace, podName, delayMs); err != nil {
+		metrics.ExperimentsTotal.WithLabelValues("inject_latency", "failed").Inc()
 		return err
 	}
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
 		_ = experiments.RemoveLatency(ctx, r.client, namespace, podName)
+		metrics.ExperimentsTotal.WithLabelValues("inject_latency", "aborted").Inc()
 		return fmt.Errorf("auto-abort triggered: %w (in-progress experiment rolled back)", err)
 	}
 
+	metrics.ExperimentsTotal.WithLabelValues("inject_latency", "success").Inc()
 	return nil
 }
 
@@ -202,21 +221,78 @@ func (r *SafetyRunner) ExecuteSpikeCPU(ctx context.Context, namespace, podName s
 	}
 
 	if err := CheckBlastRadiusByPodName(ctx, r.client, namespace, podName, 1, r.maxBlastRadiusPercent); err != nil {
+		metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "blocked").Inc()
 		return err
 	}
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
+		metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "aborted").Inc()
 		return err
 	}
 
 	if err := experiments.SpikeCPU(ctx, r.client, namespace, podName, durationSec); err != nil {
+		metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "failed").Inc()
 		return err
 	}
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
 		_ = experiments.RemoveCPUStress(ctx, r.client, namespace, podName)
+		metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "aborted").Inc()
 		return fmt.Errorf("auto-abort triggered: %w (in-progress experiment rolled back)", err)
 	}
 
+	metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "success").Inc()
 	return nil
+}
+
+func watchPodRecovery(ctx context.Context, client kubernetes.Interface, namespace, labelSelector string, killTime time.Time) {
+	watcher, err := client.CoreV1().Pods(namespace).Watch(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		fmt.Printf("failed to watch pod recovery: %v\n", err)
+		return
+	}
+	defer watcher.Stop()
+
+	// Timeout to avoid leaking goroutines
+	timeout := time.After(5 * time.Minute)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timeout:
+			fmt.Printf("timeout watching for pod recovery in namespace %q with selector %q\n", namespace, labelSelector)
+			return
+		case event, ok := <-watcher.ResultChan():
+			if !ok {
+				return
+			}
+			if event.Type == watch.Modified || event.Type == watch.Added {
+				pod, ok := event.Object.(*corev1.Pod)
+				if !ok {
+					continue
+				}
+				
+				// Check if this pod was created after the kill event
+				if pod.CreationTimestamp.Time.After(killTime) {
+					// Check if pod is Ready
+					ready := false
+					for _, cond := range pod.Status.Conditions {
+						if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
+							ready = true
+							break
+						}
+					}
+
+					if ready {
+						recoveryTime := time.Since(killTime).Seconds()
+						metrics.PodRecoverySeconds.Observe(recoveryTime)
+						return
+					}
+				}
+			}
+		}
+	}
 }
