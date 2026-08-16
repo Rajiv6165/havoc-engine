@@ -40,6 +40,7 @@ havoc-engine/
 ├── internal/
 │   ├── config/              # YAML configuration loader (config.yaml)
 │   ├── k8sclient/           # Out-of-cluster / In-cluster Kubernetes client initializer
+│   ├── metrics/             # Prometheus metrics definitions and HTTP server
 │   ├── safety/              # Safety middleware (blast radius limit, auto-abort, dry-run mode)
 │   │   ├── safety.go
 │   │   └── safety_test.go
@@ -52,9 +53,38 @@ havoc-engine/
 │       ├── spike_cpu_test.go
 │       └── rollback.go
 ├── config.yaml              # Connection and safety configuration settings
+├── docker-compose.yml       # Local Prometheus integration
+├── Dockerfile               # Build configuration
+├── prometheus.yml           # Prometheus scrape configuration
 ├── go.mod
 ├── go.sum
 └── README.md
+```
+
+---
+
+## Metrics & Observability 📊
+
+`havoc-engine` exposes a `/metrics` HTTP endpoint (on port 9090) instrumented with `prometheus/client_golang`. 
+
+It tracks the following metrics:
+- **`havoc_experiments_total`** (Counter): Total experiments executed, labeled by `experiment_type` (e.g. `kill_pod`) and `result` (`success`, `failed`, `aborted`, `blocked`).
+- **`havoc_pod_recovery_seconds`** (Histogram): Time from pod kill to a new pod becoming `Ready` (measured by watching pod status).
+- **`havoc_experiment_error_rate`** (Gauge): Current simulated or real error rate percentage used by the safety engine's auto-abort logic.
+
+### Running with Prometheus Locally
+You can easily spin up the engine alongside a Prometheus instance using Docker Compose:
+
+```bash
+docker-compose up --build -d
+```
+
+This starts `havoc-engine` in server mode (`serve` command) and `prometheus` scraping it.
+You can view the Prometheus UI at [http://localhost:9091](http://localhost:9091).
+
+To run experiments while the server is up:
+```bash
+docker-compose exec havoc-engine ./havoc-engine kill-pod --selector=app=demo
 ```
 
 ---
