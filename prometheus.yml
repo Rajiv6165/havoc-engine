@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: 'havoc-engine'
+    static_configs:
+      - targets: ['havoc-engine:9090']

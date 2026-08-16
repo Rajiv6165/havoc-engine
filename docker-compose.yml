@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  havoc-engine:
+    build: .
+    ports:
+      - "9090:9090"
+    # To run a command, one would use docker-compose exec havoc-engine ./havoc-engine ...
+    # Or just let it idle if we want to hit the metrics endpoint. 
+    # Since it's a CLI tool, without args it just prints help and exits.
+    # To keep it alive to serve metrics for demonstration, we can run an idle command
+    # or just let it start metrics server and sleep if we add a serve command.
+    # Wait, the CLI currently exits after running the command or printing help.
+    # We should add a simple `sleep infinity` or similar if we just want it to be scraped,
+    # OR we need the metrics server to run while a long command is running.
+    # Wait, if havoc-engine is just a CLI, the prometheus metrics will only be up while the CLI is running.
+    # To make it scraper-friendly for docker-compose, we can just run a sleep in the container, 
+    # but then the havoc-engine binary isn't running.
+    # Let's start the binary with a command that keeps it alive, or we can use `tail -f /dev/null`.
+    command: ["serve"]
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - havoc-engine
