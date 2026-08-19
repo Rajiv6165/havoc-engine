@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"havoc-engine/internal/config"
+	"havoc-engine/internal/experimentdef"
 	"havoc-engine/internal/k8sclient"
 	"havoc-engine/internal/metrics"
 	"havoc-engine/internal/safety"
@@ -149,7 +150,82 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(killPodCmd, injectLatencyCmd, spikeCPUCmd, serveCmd)
+	// run command for Chaos-as-Code
+	var file string
+	runCmd := &cobra.Command{
+		Use:   "run",
+		Short: "Run an experiment from a YAML definition file",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			exp, err := experimentdef.LoadExperiment(file)
+			if err != nil {
+				return err
+			}
+
+			if err := exp.Validate(); err != nil {
+				return fmt.Errorf("experiment validation failed: %w", err)
+			}
+
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load global config: %w", err)
+			}
+
+			// Override global safety limits if specified in the experiment
+			maxBlast := cfg.MaxBlastRadiusPercent
+			if exp.Safety.MaxBlastRadiusPercent > 0 {
+				maxBlast = exp.Safety.MaxBlastRadiusPercent
+			}
+
+			abortThreshold := cfg.AbortOnErrorRatePercent
+			if exp.Safety.AbortOnErrorRatePercent > 0 {
+				abortThreshold = exp.Safety.AbortOnErrorRatePercent
+			}
+
+			client, err := k8sclient.NewClient(cfg.Kubeconfig)
+			if err != nil && !dryRun {
+				return fmt.Errorf("failed to create k8s client: %w", err)
+			}
+
+			runner := safety.NewSafetyRunner(client, maxBlast, abortThreshold, dryRun, metricsChecker)
+
+			if dryRun {
+				fmt.Printf("[DRY-RUN] Executing experiment %q (%s)\n", exp.Name, exp.Action)
+			}
+
+			switch exp.Action {
+			case experimentdef.ActionKillPod:
+				deletedPod, err := runner.ExecuteKillPod(context.Background(), exp.Target.Namespace, exp.Target.LabelSelector)
+				if err != nil {
+					return err
+				}
+				if !dryRun {
+					fmt.Printf("Successfully killed pod %q for experiment %q\n", deletedPod, exp.Name)
+				}
+			case experimentdef.ActionInjectLatency:
+				err := runner.ExecuteInjectLatency(context.Background(), exp.Target.Namespace, exp.Target.PodName, exp.Params.DelayMs)
+				if err != nil {
+					return err
+				}
+				if !dryRun {
+					fmt.Printf("Successfully injected %dms latency into pod %q for experiment %q\n", exp.Params.DelayMs, exp.Target.PodName, exp.Name)
+				}
+			case experimentdef.ActionSpikeCPU:
+				err := runner.ExecuteSpikeCPU(context.Background(), exp.Target.Namespace, exp.Target.PodName, exp.Params.DurationSec)
+				if err != nil {
+					return err
+				}
+				if !dryRun {
+					fmt.Printf("Successfully injected CPU stress (%ds) into pod %q for experiment %q\n", exp.Params.DurationSec, exp.Target.PodName, exp.Name)
+				}
+			}
+
+			return nil
+		},
+	}
+	runCmd.Flags().StringVarP(&file, "file", "f", "", "Path to experiment YAML file")
+	_ = runCmd.MarkFlagRequired("file")
+
+	rootCmd.AddCommand(killPodCmd, injectLatencyCmd, spikeCPUCmd, serveCmd, runCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
