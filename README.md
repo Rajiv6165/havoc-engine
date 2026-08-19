@@ -43,6 +43,39 @@ The YAML file can specify target parameters, action-specific parameters, and can
 
 ---
 
+## Resilience Score 🏆
+
+`havoc-engine` automatically calculates a **Resilience Score (0-100)** after each real experiment run and saves it to a PostgreSQL database. 
+
+The score evaluates how well your system handled the chaos:
+- **Base Score**: Starts at 100.
+- **Recovery Time Penalty**: Subtracts up to 30 points if your pods take too long to recover (e.g., under 5s is optimal, over 30s is heavily penalized).
+- **Error Rate Penalty**: Subtracts up to 30 points if the error rate during the experiment spikes (e.g., >10% error rate).
+- **Safety Intervention Penalty**: Subtracts a flat 50 points if the engine had to auto-abort the experiment because the error rate exceeded the safety threshold (meaning the system couldn't self-regulate).
+
+All thresholds are fully tunable in `config.yaml` under the `scoring` block.
+
+### Viewing Scores
+
+You can view the history of your experiments and their scores:
+
+```bash
+$ havoc-engine history
+Recent Experiments:
+ID                                   | Type            | Namespace  | Recovery(ms) | Error(%)   | Safety Intervened | Score
+------------------------------------------------------------------------------------------------------------------------
+123e4567-e89b-12d3-a456-426614174000 | kill-pod        | payments   | 4200         | 0.50       | false             | 100  
+```
+
+To see your current average and trend:
+```bash
+$ havoc-engine score
+Average Resilience Score (last 10 runs): 95.0 / 100
+Trend: 📈 Improving
+```
+
+---
+
 ## Safety & Guardrails 🛡️
 
 `havoc-engine` includes built-in safety guardrails implemented as a middleware layer in `internal/safety/` to prevent unexpected outages during chaos experiments:
@@ -222,9 +255,11 @@ Usage:
   havoc-engine [command]
 
 Available Commands:
+  history        View recent chaos experiment history and resilience scores
   inject-latency Inject network delay into a target pod using tc/netem via an ephemeral container
   kill-pod       Delete a random pod matching the selector
   run            Run an experiment from a YAML definition file
+  score          Calculate and print the current average resilience score based on recent runs
   serve          Start the engine in server mode (keeps metrics endpoint alive)
   spike-cpu      Stresses CPU inside a target pod using a stress-ng ephemeral container
 
