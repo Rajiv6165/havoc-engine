@@ -1,0 +1,12 @@
+name: spike-cpu-payment-pod
+description: Stresses CPU on a specific payment pod for 30s to test HPA autoscaling
+target:
+  namespace: payments
+  podName: payment-service-84bb9cd4d-abc
+action: spike-cpu
+params:
+  durationSec: 30
+safety:
+  maxBlastRadiusPercent: 25
+  abortOnErrorRatePercent: 10
+schedule: manual

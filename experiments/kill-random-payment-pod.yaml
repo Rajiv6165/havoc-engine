@@ -1,0 +1,10 @@
+name: kill-random-payment-pod
+description: Randomly kills a pod in the payments service to test recovery
+target:
+  namespace: payments
+  labelSelector: app=payment-service
+action: kill-pod
+safety:
+  maxBlastRadiusPercent: 20
+  abortOnErrorRatePercent: 15
+schedule: manual

@@ -1,0 +1,12 @@
+name: inject-latency-payment-pod
+description: Injects 500ms network latency into a specific payment pod to observe downstream timeouts
+target:
+  namespace: payments
+  podName: payment-service-84bb9cd4d-xyz
+action: inject-latency
+params:
+  delayMs: 500
+safety:
+  maxBlastRadiusPercent: 20
+  abortOnErrorRatePercent: 10
+schedule: manual
