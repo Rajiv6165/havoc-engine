@@ -12,6 +12,37 @@
 
 ---
 
+## Chaos-as-Code 📄
+
+`havoc-engine` supports defining chaos experiments as code using YAML files. This allows you to version control your chaos experiments and run them predictably.
+
+### Example Experiment YAML (`experiments/kill-random-payment-pod.yaml`)
+
+```yaml
+name: kill-random-payment-pod
+description: Randomly kills a pod in the payments service to test recovery
+target:
+  namespace: payments
+  labelSelector: app=payment-service
+action: kill-pod
+safety:
+  maxBlastRadiusPercent: 20
+  abortOnErrorRatePercent: 15
+schedule: manual
+```
+
+### Running an Experiment
+
+Use the `run` command to execute an experiment defined in a YAML file:
+
+```bash
+havoc-engine run --file=experiments/kill-random-payment-pod.yaml
+```
+
+The YAML file can specify target parameters, action-specific parameters, and can even override global safety thresholds (`maxBlastRadiusPercent` and `abortOnErrorRatePercent`) for that specific run.
+
+---
+
 ## Safety & Guardrails 🛡️
 
 `havoc-engine` includes built-in safety guardrails implemented as a middleware layer in `internal/safety/` to prevent unexpected outages during chaos experiments:
@@ -193,6 +224,8 @@ Usage:
 Available Commands:
   inject-latency Inject network delay into a target pod using tc/netem via an ephemeral container
   kill-pod       Delete a random pod matching the selector
+  run            Run an experiment from a YAML definition file
+  serve          Start the engine in server mode (keeps metrics endpoint alive)
   spike-cpu      Stresses CPU inside a target pod using a stress-ng ephemeral container
 
 Flags:
