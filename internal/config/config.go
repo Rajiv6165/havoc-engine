@@ -5,13 +5,17 @@ import (
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
+	
+	"havoc-engine/internal/scoring"
 )
 
 type Config struct {
-	Kubeconfig              string  `yaml:"kubeconfig"`
-	DefaultNamespace        string  `yaml:"default_namespace"`
-	MaxBlastRadiusPercent   float64 `yaml:"maxBlastRadiusPercent"`
-	AbortOnErrorRatePercent float64 `yaml:"abortOnErrorRatePercent"`
+	Kubeconfig              string         `yaml:"kubeconfig"`
+	DefaultNamespace        string         `yaml:"default_namespace"`
+	MaxBlastRadiusPercent   float64        `yaml:"maxBlastRadiusPercent"`
+	AbortOnErrorRatePercent float64        `yaml:"abortOnErrorRatePercent"`
+	DatabaseDSN             string         `yaml:"database_dsn"`
+	Scoring                 scoring.Config `yaml:"scoring"`
 }
 
 // LoadConfig reads configuration from the given file path.
@@ -22,6 +26,8 @@ func LoadConfig(path string) (*Config, error) {
 		DefaultNamespace:        "default",
 		MaxBlastRadiusPercent:   30.0,
 		AbortOnErrorRatePercent: 5.0,
+		DatabaseDSN:             "postgres://postgres:postgres@localhost:5432/havoc?sslmode=disable",
+		Scoring:                 scoring.DefaultConfig(),
 	}
 
 	if path == "" {

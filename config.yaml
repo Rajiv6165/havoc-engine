@@ -2,3 +2,10 @@ kubeconfig: "~/.kube/config"
 default_namespace: "default"
 maxBlastRadiusPercent: 30
 abortOnErrorRatePercent: 5.0
+database_dsn: "postgres://postgres:postgres@localhost:5432/havoc?sslmode=disable"
+scoring:
+  recoveryTimeOptimalMs: 5000
+  recoveryTimeMaxMs: 30000
+  errorRateOptimalPercent: 1.0
+  errorRateMaxPercent: 10.0
+  safetyInterventionPenalty: 50
