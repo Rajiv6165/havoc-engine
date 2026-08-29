@@ -36,7 +36,7 @@ export default function LiveLogPanel() {
     return () => {
       unsubscribeStatus();
       unsubscribeMessage();
-      wsClient.disconnect();
+      wsClient?.disconnect();
     };
   }, []);
 
