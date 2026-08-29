@@ -5,3 +5,5 @@
 # Output / Test artifacts
 *.test
 *.out
+
+cmd/havoc-engine/havoc-engine.exe
