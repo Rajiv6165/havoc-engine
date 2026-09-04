@@ -14,6 +14,7 @@ import (
 	"havoc-engine/internal/experimentdef"
 	"havoc-engine/internal/k8sclient"
 	"havoc-engine/internal/metrics"
+	"havoc-engine/internal/postmortem"
 	"havoc-engine/internal/safety"
 	"havoc-engine/internal/scoring"
 	"havoc-engine/internal/storage"
@@ -337,7 +338,75 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(killPodCmd, injectLatencyCmd, spikeCPUCmd, serveCmd, runCmd, historyCmd, scoreCmd)
+	// report command
+	var reportId string
+	var latest bool
+	reportCmd := &cobra.Command{
+		Use:   "report",
+		Short: "View an AI-generated postmortem report for a past experiment",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !latest && reportId == "" {
+				return fmt.Errorf("must specify either --id or --latest")
+			}
+			
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return err
+			}
+			repo, err := storage.NewPostgresRepository(cfg.DatabaseDSN)
+			if err != nil {
+				return err
+			}
+			defer repo.Close()
+
+			var exp storage.ExperimentResult
+			
+			// We can fetch the most recent experiments and pick the first or match the ID
+			results, err := repo.GetRecentExperiments(context.Background(), 100)
+			if err != nil {
+				return err
+			}
+			
+			if len(results) == 0 {
+				fmt.Println("No experiments found.")
+				return nil
+			}
+			
+			found := false
+			if latest {
+				exp = results[0]
+				found = true
+			} else {
+				for _, r := range results {
+					if r.ID.String() == reportId {
+						exp = r
+						found = true
+						break
+					}
+				}
+			}
+			
+			if !found {
+				return fmt.Errorf("experiment not found")
+			}
+			
+			fmt.Printf("=== Postmortem Report for Experiment %s ===\n", exp.ID)
+			fmt.Printf("Type: %s\n", exp.ExperimentType)
+			fmt.Printf("Date: %s\n\n", exp.CreatedAt.Format(time.RFC1123))
+			
+			if exp.PostmortemReport != nil && *exp.PostmortemReport != "" {
+				fmt.Println(*exp.PostmortemReport)
+			} else {
+				fmt.Println("No report available.")
+			}
+			
+			return nil
+		},
+	}
+	reportCmd.Flags().StringVar(&reportId, "id", "", "Experiment ID")
+	reportCmd.Flags().BoolVar(&latest, "latest", false, "Get report for the most recent experiment")
+
+	rootCmd.AddCommand(killPodCmd, injectLatencyCmd, spikeCPUCmd, serveCmd, runCmd, historyCmd, scoreCmd, reportCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -377,6 +446,34 @@ func recordExperiment(cfg *config.Config, expType, namespace string, recoveryTim
 
 	score := scoring.CalculateResilienceScore(recoveryTimeMs, errorRateVal, safetyIntervened, cfg.Scoring)
 
+	// Generate Postmortem Report
+	var reportTextPtr *string
+	if cfg.AnthropicAPIKey != "" {
+		fmt.Println("Generating AI postmortem report...")
+		gen, err := postmortem.NewClaudeGenerator(cfg.AnthropicAPIKey)
+		if err != nil {
+			fmt.Printf("Warning: failed to initialize postmortem generator: %v\n", err)
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			
+			report, err := gen.GenerateReport(ctx, postmortem.ExperimentData{
+				ExperimentType:   expType,
+				TargetNamespace:  namespace,
+				RecoveryTimeMs:   recoveryTimeMs,
+				ErrorRatePercent: errRate,
+				SafetyIntervened: safetyIntervened,
+				ResilienceScore:  score,
+			})
+			if err != nil {
+				fmt.Printf("Warning: failed to generate postmortem report (API Error): %v\n", err)
+			} else {
+				reportTextPtr = &report
+				fmt.Println("Successfully generated AI postmortem report.")
+			}
+		}
+	}
+
 	res := &storage.ExperimentResult{
 		ID:               uuid.New(),
 		ExperimentType:   expType,
@@ -385,6 +482,7 @@ func recordExperiment(cfg *config.Config, expType, namespace string, recoveryTim
 		ErrorRatePercent: errRate,
 		SafetyIntervened: safetyIntervened,
 		ResilienceScore:  score,
+		PostmortemReport: reportTextPtr,
 		CreatedAt:        time.Now(),
 	}
 
