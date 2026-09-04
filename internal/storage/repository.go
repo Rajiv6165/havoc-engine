@@ -19,6 +19,7 @@ type ExperimentResult struct {
 	ErrorRatePercent *float64
 	SafetyIntervened bool
 	ResilienceScore  int
+	PostmortemReport *string
 	CreatedAt        time.Time
 }
 
@@ -53,9 +54,9 @@ func (r *PostgresRepository) SaveExperimentResult(ctx context.Context, result *E
 	query := `
 		INSERT INTO experiments (
 			id, experiment_type, target_namespace, recovery_time_ms, 
-			error_rate_percent, safety_intervened, resilience_score, created_at
+			error_rate_percent, safety_intervened, resilience_score, postmortem_report, created_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8
+			$1, $2, $3, $4, $5, $6, $7, $8, $9
 		)
 	`
 	_, err := r.db.ExecContext(ctx, query,
@@ -66,6 +67,7 @@ func (r *PostgresRepository) SaveExperimentResult(ctx context.Context, result *E
 		result.ErrorRatePercent,
 		result.SafetyIntervened,
 		result.ResilienceScore,
+		result.PostmortemReport,
 		result.CreatedAt,
 	)
 	if err != nil {
@@ -78,7 +80,7 @@ func (r *PostgresRepository) SaveExperimentResult(ctx context.Context, result *E
 func (r *PostgresRepository) GetRecentExperiments(ctx context.Context, limit int) ([]ExperimentResult, error) {
 	query := `
 		SELECT id, experiment_type, target_namespace, recovery_time_ms, 
-		       error_rate_percent, safety_intervened, resilience_score, created_at
+		       error_rate_percent, safety_intervened, resilience_score, postmortem_report, created_at
 		FROM experiments
 		ORDER BY created_at DESC
 		LIMIT $1
@@ -100,6 +102,7 @@ func (r *PostgresRepository) GetRecentExperiments(ctx context.Context, limit int
 			&res.ErrorRatePercent,
 			&res.SafetyIntervened,
 			&res.ResilienceScore,
+			&res.PostmortemReport,
 			&res.CreatedAt,
 		)
 		if err != nil {
@@ -156,10 +159,17 @@ func (r *PostgresRepository) RunMigrations(ctx context.Context) error {
 		error_rate_percent FLOAT,
 		safety_intervened BOOLEAN NOT NULL,
 		resilience_score INT NOT NULL,
+		postmortem_report TEXT,
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
 	`
 	_, err := r.db.ExecContext(ctx, query)
+	if err != nil {
+		return err
+	}
+	
+	alterQuery := `ALTER TABLE experiments ADD COLUMN IF NOT EXISTS postmortem_report TEXT;`
+	_, err = r.db.ExecContext(ctx, alterQuery)
 	return err
 }
 
