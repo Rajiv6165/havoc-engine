@@ -30,7 +30,7 @@ func TestMetricsIncrementAfterExperiment(t *testing.T) {
 	runner := NewSafetyRunner(client, 100.0, 10.0, false, checker)
 
 	ctx := context.Background()
-	_, err := runner.ExecuteKillPod(ctx, "default", "app=demo")
+	_, _, err := runner.ExecuteKillPod(ctx, "default", "app=demo")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

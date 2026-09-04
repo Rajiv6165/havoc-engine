@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,7 +35,7 @@ func TestSafety_BlastRadiusExceeded(t *testing.T) {
 	// Default blast radius threshold is 30%
 	runner := NewSafetyRunner(fakeClient, 30.0, 5.0, false, nil)
 
-	_, err := runner.ExecuteKillPod(ctx, "default", "app=demo")
+	_, _, err := runner.ExecuteKillPod(context.Background(), "default", "app=demo")
 	if err == nil {
 		t.Fatalf("expected error due to blast radius limit, got nil")
 	}
@@ -62,10 +63,11 @@ func TestSafety_BlastRadiusAllowed(t *testing.T) {
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-4", Namespace: "default", Labels: map[string]string{"app": "demo"}}},
 	)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
 	runner := NewSafetyRunner(fakeClient, 30.0, 5.0, false, nil)
 
-	deletedPod, err := runner.ExecuteKillPod(ctx, "default", "app=demo")
+	deletedPod, _, err := runner.ExecuteKillPod(ctx, "default", "app=demo")
 	if err != nil {
 		t.Fatalf("expected experiment to succeed within blast radius limit, got %v", err)
 	}
@@ -146,7 +148,7 @@ func TestSafety_DryRunMode(t *testing.T) {
 	// Even though 1/2 = 50% > 30% blast radius, dry-run mode should log and return without mutating or invoking API checks
 	runner := NewSafetyRunner(fakeClient, 30.0, 5.0, true, nil)
 
-	deletedPod, err := runner.ExecuteKillPod(ctx, "default", "app=demo")
+	deletedPod, _, err := runner.ExecuteKillPod(ctx, "default", "app=demo")
 	if err != nil {
 		t.Fatalf("expected dry-run kill-pod to succeed without error, got %v", err)
 	}
