@@ -1,0 +1,17 @@
+Write a short, plain-English incident report in the style of a real engineering postmortem for a recent chaos engineering experiment.
+
+Experiment Details:
+- Type: {{.ExperimentType}}
+- Target Namespace: {{.TargetNamespace}}
+- Recovery Time: {{if .RecoveryTimeMs}}{{.RecoveryTimeMs}}ms{{else}}N/A{{end}}
+- Error Rate: {{if .ErrorRatePercent}}{{printf "%.2f" .ErrorRatePercent}}%{{else}}N/A{{end}}
+- Safety Mechanism Intervened: {{if .SafetyIntervened}}Yes{{else}}No{{end}}
+- Resilience Score: {{.ResilienceScore}}/100
+
+Format the report with the following sections:
+1. What happened: A brief summary of the experiment and its immediate effect.
+2. Impact: Describe the user or system impact based on the recovery time and error rate.
+3. Likely root cause: Infer a technical explanation based on the experiment type and the metrics observed.
+4. Recommendation: Provide one concrete, actionable recommendation to improve system resilience against this type of failure.
+
+Keep the language professional, concise, and focused on system reliability. Do not include any introductory or concluding remarks outside of the requested sections.

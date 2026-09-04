@@ -15,6 +15,7 @@ type Config struct {
 	MaxBlastRadiusPercent   float64        `yaml:"maxBlastRadiusPercent"`
 	AbortOnErrorRatePercent float64        `yaml:"abortOnErrorRatePercent"`
 	DatabaseDSN             string         `yaml:"database_dsn"`
+	AnthropicAPIKey         string         `yaml:"anthropic_api_key"`
 	Scoring                 scoring.Config `yaml:"scoring"`
 }
 
@@ -54,6 +55,12 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	cfg.Kubeconfig = expandHomePath(cfg.Kubeconfig)
+	
+	// Read API key from environment, prioritizing it over the config file
+	if envKey := os.Getenv("ANTHROPIC_API_KEY"); envKey != "" {
+		cfg.AnthropicAPIKey = envKey
+	}
+	
 	return cfg, nil
 }
 
