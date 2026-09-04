@@ -269,3 +269,37 @@ Flags:
   -h, --help               help for havoc-engine
   -n, --namespace string   Kubernetes namespace (defaults to config default_namespace)
 ```
+
+## AI Postmortems
+
+Havoc Engine can automatically generate plain-English postmortem reports for your chaos experiments using Anthropic's Claude API. These reports analyze the experiment type, impact, and metrics to provide a realistic summary and actionable recommendation.
+
+To enable this feature, provide your API key via the `ANTHROPIC_API_KEY` environment variable or in `config.yaml`.
+
+You can view past reports using the `report` command:
+
+```bash
+havoc-engine report --latest
+# or
+havoc-engine report --id <experiment-id>
+```
+
+### Example AI Postmortem Report
+
+```text
+=== Postmortem Report for Experiment a1b2c3d4-e5f6-7a8b-9c0d-e1f2a3b4c5d6 ===
+Type: kill-pod
+Date: Fri, 04 Sep 2026 23:45:00 IST
+
+1. What happened:
+During a scheduled chaos experiment, a random application pod in the `payment` namespace was forcefully terminated to test system resilience under sudden instance loss.
+
+2. Impact:
+The system recovered in 3500ms. During this brief window, the error rate spiked to 1.50%. No safety mechanisms were triggered, indicating the impact remained within acceptable thresholds.
+
+3. Likely root cause:
+The 3.5s recovery time and minor error spike suggest that while the Kubernetes ReplicaSet successfully spun up a replacement pod, in-flight requests to the terminated pod were dropped. Client-side retries were likely not configured aggressively enough to fully mask the disruption.
+
+4. Recommendation:
+Implement retry logic with exponential backoff on internal service-to-service calls targeting the `payment` service, and ensure graceful shutdown hooks (SIGTERM handling) are in place so the pod stops accepting new connections before exiting.
+```
