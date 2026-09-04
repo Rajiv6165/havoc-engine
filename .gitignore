@@ -7,3 +7,6 @@
 *.out
 
 cmd/havoc-engine/havoc-engine.exe
+
+# Environment variables
+.env
