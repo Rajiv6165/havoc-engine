@@ -28,6 +28,12 @@ services:
     # Let's start the binary with a command that keeps it alive, or we can use `tail -f /dev/null`.
     command: ["serve"]
 
+  havoc-cron:
+    build: .
+    depends_on:
+      - postgres
+    command: ["cron", "start"]
+
   prometheus:
     image: prom/prometheus:latest
     ports:
