@@ -17,6 +17,21 @@ type Config struct {
 	DatabaseDSN             string         `yaml:"database_dsn"`
 	AnthropicAPIKey         string         `yaml:"anthropic_api_key"`
 	Scoring                 scoring.Config `yaml:"scoring"`
+	Scheduler               SchedulerConfig `yaml:"scheduler"`
+}
+
+type SchedulerConfig struct {
+	Enabled        bool         `yaml:"enabled"`
+	AllowedWindows []TimeWindow `yaml:"allowedWindows"`
+	MinExecutions  int          `yaml:"minExecutions"`
+	MaxExecutions  int          `yaml:"maxExecutions"`
+	Period         string       `yaml:"period"`
+}
+
+type TimeWindow struct {
+	Days      []string `yaml:"days"`
+	StartTime string   `yaml:"startTime"`
+	EndTime   string   `yaml:"endTime"`
 }
 
 // LoadConfig reads configuration from the given file path.
@@ -29,6 +44,9 @@ func LoadConfig(path string) (*Config, error) {
 		AbortOnErrorRatePercent: 5.0,
 		DatabaseDSN:             "postgres://postgres:postgres@localhost:5432/havoc?sslmode=disable",
 		Scoring:                 scoring.DefaultConfig(),
+		Scheduler: SchedulerConfig{
+			Enabled: false,
+		},
 	}
 
 	if path == "" {

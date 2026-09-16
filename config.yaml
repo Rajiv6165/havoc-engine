@@ -9,3 +9,13 @@ scoring:
   errorRateOptimalPercent: 1.0
   errorRateMaxPercent: 10.0
   safetyInterventionPenalty: 50
+
+scheduler:
+  enabled: true
+  allowedWindows:
+    - days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+      startTime: "10:00"
+      endTime: "16:00"
+  minExecutions: 1
+  maxExecutions: 3
+  period: "week"
