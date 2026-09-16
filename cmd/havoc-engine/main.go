@@ -16,6 +16,7 @@ import (
 	"havoc-engine/internal/metrics"
 	"havoc-engine/internal/postmortem"
 	"havoc-engine/internal/safety"
+	"havoc-engine/internal/scheduler"
 	"havoc-engine/internal/scoring"
 	"havoc-engine/internal/storage"
 )
@@ -406,7 +407,122 @@ func main() {
 	reportCmd.Flags().StringVar(&reportId, "id", "", "Experiment ID")
 	reportCmd.Flags().BoolVar(&latest, "latest", false, "Get report for the most recent experiment")
 
-	rootCmd.AddCommand(killPodCmd, injectLatencyCmd, spikeCPUCmd, serveCmd, runCmd, historyCmd, scoreCmd, reportCmd)
+	// cron command group
+	cronCmd := &cobra.Command{
+		Use:   "cron",
+		Short: "Manage the chaos scheduler",
+	}
+
+	cronStartCmd := &cobra.Command{
+		Use:   "start",
+		Short: "Start the chaos scheduler",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return err
+			}
+			repo, err := storage.NewPostgresRepository(cfg.DatabaseDSN)
+			if err != nil {
+				return err
+			}
+			defer repo.Close()
+
+			_ = repo.RunMigrations(context.Background())
+
+			experimentsDir := "experiments"
+			sched := scheduler.NewScheduler(cfg, repo, scheduler.RealClock{}, experimentsDir, metricsChecker)
+			sched.Run(context.Background())
+			return nil
+		},
+	}
+
+	cronPauseCmd := &cobra.Command{
+		Use:   "pause",
+		Short: "Pause the chaos scheduler",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return err
+			}
+			repo, err := storage.NewPostgresRepository(cfg.DatabaseDSN)
+			if err != nil {
+				return err
+			}
+			defer repo.Close()
+
+			if err := repo.SetSchedulerState(context.Background(), true); err != nil {
+				return fmt.Errorf("failed to pause scheduler: %w", err)
+			}
+			fmt.Println("Chaos scheduler paused.")
+			return nil
+		},
+	}
+
+	cronResumeCmd := &cobra.Command{
+		Use:   "resume",
+		Short: "Resume the chaos scheduler",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return err
+			}
+			repo, err := storage.NewPostgresRepository(cfg.DatabaseDSN)
+			if err != nil {
+				return err
+			}
+			defer repo.Close()
+
+			if err := repo.SetSchedulerState(context.Background(), false); err != nil {
+				return fmt.Errorf("failed to resume scheduler: %w", err)
+			}
+			fmt.Println("Chaos scheduler resumed.")
+			return nil
+		},
+	}
+
+	cronStatusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "View the status and recent logs of the chaos scheduler",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return err
+			}
+			repo, err := storage.NewPostgresRepository(cfg.DatabaseDSN)
+			if err != nil {
+				return err
+			}
+			defer repo.Close()
+
+			paused, err := repo.GetSchedulerState(context.Background())
+			if err != nil {
+				return fmt.Errorf("failed to get scheduler state: %w", err)
+			}
+
+			if paused {
+				fmt.Println("Scheduler Status: PAUSED ⏸️")
+			} else {
+				fmt.Println("Scheduler Status: RUNNING ▶️")
+			}
+
+			runs, err := repo.GetRecentScheduledRuns(context.Background(), 10)
+			if err != nil {
+				return fmt.Errorf("failed to get recent scheduled runs: %w", err)
+			}
+
+			fmt.Println("\nRecent Scheduled Runs:")
+			fmt.Printf("%-25s | %-30s | %-20s\n", "Time", "Experiment", "Outcome")
+			fmt.Println(strings.Repeat("-", 80))
+			for _, r := range runs {
+				fmt.Printf("%-25s | %-30s | %-20s\n", r.Timestamp.Format(time.RFC3339), r.ExperimentFile, r.Outcome)
+			}
+			return nil
+		},
+	}
+
+	cronCmd.AddCommand(cronStartCmd, cronPauseCmd, cronResumeCmd, cronStatusCmd)
+
+	rootCmd.AddCommand(killPodCmd, injectLatencyCmd, spikeCPUCmd, serveCmd, runCmd, historyCmd, scoreCmd, reportCmd, cronCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
