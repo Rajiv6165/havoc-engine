@@ -23,11 +23,23 @@ type ExperimentResult struct {
 	CreatedAt        time.Time
 }
 
+// ScheduledRun represents an execution attempt by the scheduler.
+type ScheduledRun struct {
+	ID             uuid.UUID
+	Timestamp      time.Time
+	ExperimentFile string
+	Outcome        string
+}
+
 // ExperimentRepository defines the interface for interacting with experiment storage.
 type ExperimentRepository interface {
 	SaveExperimentResult(ctx context.Context, result *ExperimentResult) error
 	GetRecentExperiments(ctx context.Context, limit int) ([]ExperimentResult, error)
 	GetScoreHistory(ctx context.Context, limit int) ([]int, error)
+	LogScheduledRun(ctx context.Context, outcome, experimentFile string) error
+	GetRecentScheduledRuns(ctx context.Context, limit int) ([]ScheduledRun, error)
+	GetSchedulerState(ctx context.Context) (bool, error)
+	SetSchedulerState(ctx context.Context, paused bool) error
 }
 
 // PostgresRepository is a PostgreSQL implementation of ExperimentRepository.
@@ -148,6 +160,66 @@ func (r *PostgresRepository) GetScoreHistory(ctx context.Context, limit int) ([]
 	return scores, nil
 }
 
+// LogScheduledRun logs an execution attempt by the scheduler.
+func (r *PostgresRepository) LogScheduledRun(ctx context.Context, outcome, experimentFile string) error {
+	query := `
+		INSERT INTO scheduled_runs (id, timestamp, experiment_file, outcome)
+		VALUES ($1, $2, $3, $4)
+	`
+	_, err := r.db.ExecContext(ctx, query, uuid.New(), time.Now(), experimentFile, outcome)
+	return err
+}
+
+// GetRecentScheduledRuns retrieves the most recent scheduled runs up to the limit.
+func (r *PostgresRepository) GetRecentScheduledRuns(ctx context.Context, limit int) ([]ScheduledRun, error) {
+	query := `
+		SELECT id, timestamp, experiment_file, outcome
+		FROM scheduled_runs
+		ORDER BY timestamp DESC
+		LIMIT $1
+	`
+	rows, err := r.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query scheduled runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []ScheduledRun
+	for rows.Next() {
+		var run ScheduledRun
+		if err := rows.Scan(&run.ID, &run.Timestamp, &run.ExperimentFile, &run.Outcome); err != nil {
+			return nil, fmt.Errorf("failed to scan scheduled run: %w", err)
+		}
+		runs = append(runs, run)
+	}
+	
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	return runs, nil
+}
+
+// GetSchedulerState retrieves the current pause state.
+func (r *PostgresRepository) GetSchedulerState(ctx context.Context) (bool, error) {
+	var isPaused bool
+	err := r.db.QueryRowContext(ctx, "SELECT is_paused FROM scheduler_state WHERE id = 1").Scan(&isPaused)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return isPaused, err
+}
+
+// SetSchedulerState updates the pause state.
+func (r *PostgresRepository) SetSchedulerState(ctx context.Context, paused bool) error {
+	query := `
+		INSERT INTO scheduler_state (id, is_paused) VALUES (1, $1)
+		ON CONFLICT (id) DO UPDATE SET is_paused = EXCLUDED.is_paused
+	`
+	_, err := r.db.ExecContext(ctx, query, paused)
+	return err
+}
+
 // RunMigrations runs the initialization SQL.
 func (r *PostgresRepository) RunMigrations(ctx context.Context) error {
 	query := `
@@ -170,6 +242,26 @@ func (r *PostgresRepository) RunMigrations(ctx context.Context) error {
 	
 	alterQuery := `ALTER TABLE experiments ADD COLUMN IF NOT EXISTS postmortem_report TEXT;`
 	_, err = r.db.ExecContext(ctx, alterQuery)
+	if err != nil {
+		return err
+	}
+
+	schedulerQueries := `
+	CREATE TABLE IF NOT EXISTS scheduled_runs (
+		id UUID PRIMARY KEY,
+		timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		experiment_file TEXT NOT NULL,
+		outcome TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS scheduler_state (
+		id INT PRIMARY KEY,
+		is_paused BOOLEAN NOT NULL DEFAULT FALSE
+	);
+	
+	INSERT INTO scheduler_state (id, is_paused) VALUES (1, FALSE) ON CONFLICT DO NOTHING;
+	`
+	_, err = r.db.ExecContext(ctx, schedulerQueries)
 	return err
 }
 

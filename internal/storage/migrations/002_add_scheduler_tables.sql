@@ -1,0 +1,13 @@
+CREATE TABLE IF NOT EXISTS scheduled_runs (
+	id UUID PRIMARY KEY,
+	timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	experiment_file TEXT NOT NULL,
+	outcome TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS scheduler_state (
+	id INT PRIMARY KEY,
+	is_paused BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+INSERT INTO scheduler_state (id, is_paused) VALUES (1, FALSE) ON CONFLICT DO NOTHING;
