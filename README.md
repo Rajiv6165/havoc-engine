@@ -153,6 +153,55 @@ docker-compose exec havoc-engine ./havoc-engine kill-pod --selector=app=demo
 
 ---
 
+## ⏱️ Chaos Cron (Automated Scheduler)
+
+Havoc Engine includes a built-in scheduler that can randomly run your chaos experiments during pre-defined safe windows. This allows you to continuously test your system's resilience without manual intervention.
+
+### 1. Configuration
+
+The scheduler reads its configuration from the `scheduler` section of your `config.yaml`.
+
+```yaml
+scheduler:
+  enabled: true
+  allowedWindows:
+    - days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+      startTime: "10:00"
+      endTime: "16:00"
+```
+
+In the example above, experiments will only be executed between 10:00 AM and 4:00 PM on weekdays.
+
+### 2. Starting the Scheduler
+
+To run the scheduler in the foreground:
+
+```bash
+havoc-engine cron start
+```
+
+Alternatively, if you are using Docker Compose, the `havoc-cron` service automatically runs the scheduler in the background.
+
+### 3. Managing the Scheduler
+
+You can pause the scheduler at any time (e.g., during a real incident or a freeze period). The pause state is persisted in the database, meaning it survives restarts.
+
+```bash
+# Pause automated chaos
+havoc-engine cron pause
+
+# Resume automated chaos
+havoc-engine cron resume
+```
+
+To see the current status of the scheduler and an audit log of recent automated runs (both executed and skipped):
+
+```bash
+havoc-engine cron status
+```
+
+---
+
 ## Prerequisites
 
 - **Go**: 1.21 or higher
