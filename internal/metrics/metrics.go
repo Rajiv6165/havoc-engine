@@ -3,7 +3,6 @@ package metrics
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
