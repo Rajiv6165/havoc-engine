@@ -50,30 +50,28 @@ func StartMetricsServer(port int) {
 	}()
 }
 
-// PrometheusMetricsChecker implements safety.MetricsChecker.
+// PrometheusMetricsChecker implements safety.MetricsChecker using a real Prometheus client.
 type PrometheusMetricsChecker struct {
-	// Base rate for simulated errors.
-	BaseRate float64
+	client *PromClient
 }
 
 // NewPrometheusMetricsChecker creates a new PrometheusMetricsChecker.
-func NewPrometheusMetricsChecker(baseRate float64) *PrometheusMetricsChecker {
+func NewPrometheusMetricsChecker(promBaseURL string) *PrometheusMetricsChecker {
 	return &PrometheusMetricsChecker{
-		BaseRate: baseRate,
+		client: NewPromClient(promBaseURL),
 	}
 }
 
-// GetErrorRate returns a simulated error rate and updates the Prometheus gauge.
+// GetErrorRate queries the actual error rate from Prometheus and updates the Prometheus gauge.
 func (c *PrometheusMetricsChecker) GetErrorRate(ctx context.Context, namespace string) (float64, error) {
-	// Simulate an error rate around the BaseRate.
-	variation := (rand.Float64() * 4.0) - 2.0
-	currentRate := c.BaseRate + variation
-	if currentRate < 0 {
-		currentRate = 0
+	rate, err := c.client.QueryErrorRate(ctx)
+	if err != nil {
+		fmt.Printf("Warning: Failed to query Prometheus for error rate: %v. Falling back to 0%%.\n", err)
+		rate = 0.0
 	}
 
 	// Update the gauge so Prometheus can scrape the exact value the safety engine sees.
-	ExperimentErrorRate.Set(currentRate)
+	ExperimentErrorRate.Set(rate)
 
-	return currentRate, nil
+	return rate, nil
 }
