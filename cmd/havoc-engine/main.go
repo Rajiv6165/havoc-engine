@@ -36,8 +36,8 @@ func main() {
 	// Start metrics server in the background
 	metrics.StartMetricsServer(9090)
 	
-	// Initialize Prometheus metrics checker with a base simulated error rate
-	metricsChecker := metrics.NewPrometheusMetricsChecker(2.0)
+	// Initialize Prometheus metrics checker with the local Prometheus endpoint
+	metricsChecker := metrics.NewPrometheusMetricsChecker("http://localhost:9090")
 
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "config.yaml", "Path to config YAML file")
 	rootCmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "", "Kubernetes namespace (defaults to config default_namespace)")
@@ -548,8 +548,8 @@ func recordExperiment(cfg *config.Config, expType, namespace string, recoveryTim
 	}
 
 	// For error rate, we'd ideally query the prometheus backend, but since this is CLI-driven,
-	// let's grab the current error rate from our dummy metrics checker.
-	checker := metrics.NewPrometheusMetricsChecker(2.0)
+	// let's grab the current error rate from our real metrics checker.
+	checker := metrics.NewPrometheusMetricsChecker("http://localhost:9090")
 	var errRate *float64
 	if rate, err := checker.GetErrorRate(context.Background(), namespace); err == nil {
 		errRate = &rate
