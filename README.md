@@ -27,12 +27,17 @@ The project is composed of several key components:
 
 ---
 
+## 📊 Metrics & Observability
+
+The Havoc Engine exposes a `/metrics` endpoint scraped by Prometheus. Notably, the **auto-abort safety mechanism** relies on a real error rate queried dynamically from Prometheus. However, note that this error rate measures **recent experiment failure rate** (i.e. the percentage of recent havoc experiments that failed or were aborted), rather than full application-level live traffic monitoring. It is an approximation based on the engine's own experiment history.
+
+---
+
 ## ⚠️ Known Limitations (Not Production Ready)
 
 **Please note that this project is currently in a pre-release state and is NOT yet ready for production use.**
 
 - **Mock Dashboard Data**: The live data shown in the dashboard (status cards, experiment triggers, blast radius graph) currently uses mock/placeholder data and is not yet wired to the real backend engine API.
-- **Simulated Metrics**: The error-rate metric that drives the auto-abort feature and resilience scoring is currently simulated, not sourced from real cluster observability tools (like a real Prometheus integration scraping your apps).
 - **No Live Deployment**: There is no live, public deployment of the dashboard or engine yet. It is designed to be run locally for development and testing.
 
 ---
