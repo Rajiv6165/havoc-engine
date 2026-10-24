@@ -38,12 +38,21 @@ var (
 	)
 )
 
+// NewMetricsServer creates an HTTP server that exposes Prometheus metrics.
+func NewMetricsServer(port int) *http.Server {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	return &http.Server{
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: mux,
+	}
+}
+
 // StartMetricsServer starts an HTTP server to expose Prometheus metrics.
 func StartMetricsServer(port int) {
-	http.Handle("/metrics", promhttp.Handler())
-	addr := fmt.Sprintf(":%d", port)
+	srv := NewMetricsServer(port)
 	go func() {
-		if err := http.ListenAndServe(addr, nil); err != nil {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fmt.Printf("Metrics server failed: %v\n", err)
 		}
 	}()

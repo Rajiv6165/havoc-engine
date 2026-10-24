@@ -3,14 +3,20 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
+	"havoc-engine/internal/api"
 	"havoc-engine/internal/config"
+	"havoc-engine/internal/events"
 	"havoc-engine/internal/experimentdef"
 	"havoc-engine/internal/k8sclient"
 	"havoc-engine/internal/metrics"
@@ -33,9 +39,6 @@ func main() {
 		Short: "Havoc Engine is a Kubernetes chaos engineering CLI tool",
 	}
 
-	// Start metrics server in the background
-	metrics.StartMetricsServer(9090)
-	
 	// Initialize Prometheus metrics checker with the local Prometheus endpoint
 	metricsChecker := metrics.NewPrometheusMetricsChecker("http://localhost:9090")
 
@@ -167,11 +170,93 @@ func main() {
 	// serve command
 	serveCmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start the engine in server mode (keeps metrics endpoint alive)",
+		Short: "Start the Havoc Engine control plane (API server, WebSocket streaming, metrics)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("Havoc Engine is running in server mode. Metrics available at :9090/metrics")
-			// Block indefinitely to keep the server alive
-			select {}
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Initialize storage repository
+			var repo storage.ExperimentRepository
+			if pgRepo, err := storage.NewPostgresRepository(cfg.DatabaseDSN); err == nil {
+				repo = pgRepo
+				defer pgRepo.Close()
+				_ = pgRepo.RunMigrations(context.Background())
+			} else {
+				fmt.Printf("Warning: failed to connect to database: %v. Running without persistent storage.\n", err)
+			}
+
+			// Kubernetes client
+			client, err := k8sclient.NewClient(cfg.Kubeconfig)
+			if err != nil && !dryRun {
+				fmt.Printf("Warning: failed to connect to Kubernetes cluster: %v\n", err)
+			}
+
+			// Event hub
+			hub := events.NewHub()
+			defer hub.Close()
+
+			// Metrics checker
+			promURL := fmt.Sprintf("http://localhost:%d", cfg.Server.MetricsPort)
+			srvMetricsChecker := metrics.NewPrometheusMetricsChecker(promURL)
+
+			// 1. Metrics server
+			metricsServer := metrics.NewMetricsServer(cfg.Server.MetricsPort)
+			go func() {
+				if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					fmt.Printf("Metrics server error: %v\n", err)
+				}
+			}()
+
+			// 2. HTTP API server
+			apiServer := api.NewServer(cfg, client, repo, hub, srvMetricsChecker)
+			go func() {
+				if err := apiServer.Start(); err != nil && err != http.ErrServerClosed {
+					fmt.Printf("API server error: %v\n", err)
+				}
+			}()
+
+			// 3. WebSocket server
+			wsServer := events.NewWSServer(hub, cfg.Server.WSPort)
+			go func() {
+				if err := wsServer.Start(); err != nil && err != http.ErrServerClosed {
+					fmt.Printf("WebSocket server error: %v\n", err)
+				}
+			}()
+
+			fmt.Println("Havoc Engine Control Plane running:")
+			fmt.Printf("  -> HTTP API:        http://localhost:%d\n", cfg.Server.Port)
+			fmt.Printf("  -> WebSocket Event: ws://localhost:%d\n", cfg.Server.WSPort)
+			fmt.Printf("  -> Prometheus:      http://localhost:%d/metrics\n", cfg.Server.MetricsPort)
+
+			// Graceful shutdown on SIGINT/SIGTERM
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+			<-sigChan
+
+			fmt.Println("\nReceived shutdown signal, stopping servers...")
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			var wg sync.WaitGroup
+			wg.Add(3)
+			go func() {
+				defer wg.Done()
+				_ = apiServer.Shutdown(shutdownCtx)
+			}()
+			go func() {
+				defer wg.Done()
+				_ = wsServer.Shutdown(shutdownCtx)
+			}()
+			go func() {
+				defer wg.Done()
+				_ = metricsServer.Shutdown(shutdownCtx)
+			}()
+			wg.Wait()
+
+			fmt.Println("Havoc Engine shutdown complete.")
+			return nil
 		},
 	}
 
@@ -428,6 +513,8 @@ func main() {
 			defer repo.Close()
 
 			_ = repo.RunMigrations(context.Background())
+
+			metrics.StartMetricsServer(cfg.Server.MetricsPort)
 
 			experimentsDir := "experiments"
 			sched := scheduler.NewScheduler(cfg, repo, scheduler.RealClock{}, experimentsDir, metricsChecker)
