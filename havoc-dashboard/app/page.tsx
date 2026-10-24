@@ -4,6 +4,7 @@ import StatusCard, { ServiceStatus } from '@/components/StatusCard';
 import ExperimentButton from '@/components/ExperimentButton';
 import LiveLogPanel from '@/components/LiveLogPanel';
 import BlastRadiusGraph from '@/components/BlastRadiusGraph';
+import ExperimentHistoryPanel from '@/components/ExperimentHistoryPanel';
 
 export default function Home() {
   const [services, setServices] = useState<ServiceStatus[]>([]);
@@ -217,6 +218,10 @@ export default function Home() {
                 Blast Radius
               </h2>
               <BlastRadiusGraph />
+            </section>
+
+            <section>
+              <ExperimentHistoryPanel />
             </section>
           </div>
 
