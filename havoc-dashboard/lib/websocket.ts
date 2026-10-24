@@ -88,4 +88,11 @@ export class HavocWebSocket {
   }
 }
 
-export const wsClient = typeof window !== 'undefined' ? new HavocWebSocket('ws://localhost:9091') : null;
+const getWsUrl = () => {
+  if (typeof window === 'undefined') return 'ws://localhost:9091';
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  const host = window.location.hostname || 'localhost';
+  return `ws://${host}:9091`;
+};
+
+export const wsClient = typeof window !== 'undefined' ? new HavocWebSocket(getWsUrl()) : null;
