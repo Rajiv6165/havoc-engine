@@ -11,9 +11,62 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 
+	"havoc-engine/internal/events"
 	"havoc-engine/internal/experiments"
 	"havoc-engine/internal/metrics"
 )
+
+type contextKey string
+
+const (
+	ExpIDKey   contextKey = "havoc_exp_id"
+	ServiceKey contextKey = "havoc_service_name"
+)
+
+// WithExperimentContext attaches experiment ID and service name to context.
+func WithExperimentContext(ctx context.Context, expID, service string) context.Context {
+	ctx = context.WithValue(ctx, ExpIDKey, expID)
+	ctx = context.WithValue(ctx, ServiceKey, service)
+	return ctx
+}
+
+func getExpIDAndService(ctx context.Context, fallbackService string) (string, string) {
+	expID := ""
+	if v, ok := ctx.Value(ExpIDKey).(string); ok {
+		expID = v
+	}
+	service := fallbackService
+	if v, ok := ctx.Value(ServiceKey).(string); ok && v != "" {
+		service = v
+	}
+	return expID, service
+}
+
+func extractServiceName(selector, podName string) string {
+	if selector != "" {
+		parts := strings.Split(selector, ",")
+		for _, part := range parts {
+			kv := strings.Split(strings.TrimSpace(part), "=")
+			if len(kv) == 2 {
+				if kv[0] == "app" || kv[0] == "service" || kv[0] == "app.kubernetes.io/name" {
+					return kv[1]
+				}
+			}
+		}
+		if idx := strings.Index(selector, "="); idx != -1 {
+			return selector[idx+1:]
+		}
+		return selector
+	}
+	if podName != "" {
+		parts := strings.Split(podName, "-")
+		if len(parts) >= 3 {
+			return strings.Join(parts[:len(parts)-2], "-")
+		}
+		return podName
+	}
+	return "unknown"
+}
 
 // MetricsChecker defines an interface for fetching real-time metrics (e.g. error rate).
 type MetricsChecker interface {
@@ -34,6 +87,7 @@ type SafetyRunner struct {
 	abortOnErrorRatePercent float64
 	dryRun                  bool
 	metricsChecker          MetricsChecker
+	publisher               events.EventPublisher
 }
 
 // NewSafetyRunner initializes a new SafetyRunner.
@@ -50,6 +104,17 @@ func NewSafetyRunner(client kubernetes.Interface, maxBlastRadius, abortThreshold
 		abortOnErrorRatePercent: abortThreshold,
 		dryRun:                  dryRun,
 		metricsChecker:          checker,
+	}
+}
+
+// SetPublisher assigns an event publisher to emit lifecycle events.
+func (r *SafetyRunner) SetPublisher(pub events.EventPublisher) {
+	r.publisher = pub
+}
+
+func (r *SafetyRunner) publish(event events.Event) {
+	if r.publisher != nil {
+		r.publisher.Publish(event)
 	}
 }
 
@@ -146,31 +211,45 @@ func CheckAutoAbort(ctx context.Context, checker MetricsChecker, namespace strin
 
 // ExecuteKillPod wraps experiments.KillPod with safety checks and dry-run logic.
 func (r *SafetyRunner) ExecuteKillPod(ctx context.Context, namespace, labelSelector string) (string, *int, error) {
+	expID, service := getExpIDAndService(ctx, extractServiceName(labelSelector, ""))
 	if r.dryRun {
 		fmt.Printf("[DRY-RUN] Would kill 1 pod matching selector %q in namespace %q\n", labelSelector, namespace)
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventTargetSelected, Level: "warn", Message: fmt.Sprintf("[%s] target_selected: targeting simulated pod in %s", expID, service), Service: service})
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventPodKilled, Level: "warn", Message: fmt.Sprintf("[%s] pod_killed: simulated kill of pod in %s", expID, service), Service: service})
 		simRecovery := 1000
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: service %q pod recovered in %dms (resolved)", expID, service, simRecovery), Service: service, RecoveryMs: &simRecovery})
 		return "[DRY-RUN] simulated-pod", &simRecovery, nil
 	}
 
 	if err := CheckBlastRadiusBySelector(ctx, r.client, namespace, labelSelector, 1, r.maxBlastRadiusPercent); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("kill_pod", "blocked").Inc()
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventBlocked, Level: "error", Message: fmt.Sprintf("[%s] blocked: %v", expID, err), Service: service})
 		return "", nil, err
 	}
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("kill_pod", "aborted").Inc()
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventAborted, Level: "error", Message: fmt.Sprintf("[%s] aborted: %v", expID, err), Service: service})
 		return "", nil, err
 	}
 
-	killTime := time.Now()
-	deletedPod, err := experiments.KillPod(ctx, r.client, namespace, labelSelector)
+	targetPod, err := experiments.SelectTargetPod(ctx, r.client, namespace, labelSelector)
 	if err != nil {
+		return "", nil, err
+	}
+	r.publish(events.Event{ExperimentID: expID, Type: events.EventTargetSelected, Level: "warn", Message: fmt.Sprintf("[%s] target_selected: targeting pod %q in service %q", expID, targetPod.Name, service), Service: service})
+
+	killTime := time.Now()
+	if err := experiments.DeletePod(ctx, r.client, namespace, targetPod.Name); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("kill_pod", "failed").Inc()
 		return "", nil, err
 	}
+	deletedPod := targetPod.Name
+	r.publish(events.Event{ExperimentID: expID, Type: events.EventPodKilled, Level: "warn", Message: fmt.Sprintf("[%s] pod_killed: deleted pod %q in service %q", expID, deletedPod, service), Service: service})
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("kill_pod", "aborted").Inc()
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventAborted, Level: "error", Message: fmt.Sprintf("[%s] aborted: auto-abort triggered post-execution: %v", expID, err), Service: service})
 		return deletedPod, nil, fmt.Errorf("auto-abort triggered post-execution: %w", err)
 	}
 
@@ -178,27 +257,38 @@ func (r *SafetyRunner) ExecuteKillPod(ctx context.Context, namespace, labelSelec
 
 	// Watch for pod recovery synchronously to capture recovery time for scoring
 	fmt.Printf("Waiting for pod recovery in namespace %q with selector %q...\n", namespace, labelSelector)
+	r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovering, Level: "info", Message: fmt.Sprintf("[%s] recovering: waiting for service %q pod recovery", expID, service), Service: service})
 	recoveryTimeMs := watchPodRecovery(ctx, r.client, namespace, labelSelector, killTime)
+	if recoveryTimeMs != nil {
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: service %q pod recovered in %dms (resolved)", expID, service, *recoveryTimeMs), Service: service, RecoveryMs: recoveryTimeMs})
+	}
 
 	return deletedPod, recoveryTimeMs, nil
 }
 
 // ExecuteInjectLatency wraps experiments.InjectLatency with safety checks, auto-abort, and rollback logic.
 func (r *SafetyRunner) ExecuteInjectLatency(ctx context.Context, namespace, podName string, delayMs int) error {
+	expID, service := getExpIDAndService(ctx, extractServiceName("", podName))
 	if r.dryRun {
 		fmt.Printf("[DRY-RUN] Would inject %dms latency into pod %q in namespace %q\n", delayMs, podName, namespace)
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventTargetSelected, Level: "warn", Message: fmt.Sprintf("[%s] target_selected: targeting pod %q in service %q", expID, podName, service), Service: service})
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: simulated latency injection complete (resolved)", expID), Service: service})
 		return nil
 	}
 
 	if err := CheckBlastRadiusByPodName(ctx, r.client, namespace, podName, 1, r.maxBlastRadiusPercent); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("inject_latency", "blocked").Inc()
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventBlocked, Level: "error", Message: fmt.Sprintf("[%s] blocked: %v", expID, err), Service: service})
 		return err
 	}
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("inject_latency", "aborted").Inc()
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventAborted, Level: "error", Message: fmt.Sprintf("[%s] aborted: %v", expID, err), Service: service})
 		return err
 	}
+
+	r.publish(events.Event{ExperimentID: expID, Type: events.EventTargetSelected, Level: "warn", Message: fmt.Sprintf("[%s] target_selected: targeting pod %q in service %q for latency", expID, podName, service), Service: service})
 
 	if err := experiments.InjectLatency(ctx, r.client, namespace, podName, delayMs); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("inject_latency", "failed").Inc()
@@ -208,29 +298,38 @@ func (r *SafetyRunner) ExecuteInjectLatency(ctx context.Context, namespace, podN
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
 		_ = experiments.RemoveLatency(ctx, r.client, namespace, podName)
 		metrics.ExperimentsTotal.WithLabelValues("inject_latency", "aborted").Inc()
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventAborted, Level: "error", Message: fmt.Sprintf("[%s] aborted: auto-abort triggered and latency rolled back: %v", expID, err), Service: service})
 		return fmt.Errorf("auto-abort triggered: %w (in-progress experiment rolled back)", err)
 	}
 
 	metrics.ExperimentsTotal.WithLabelValues("inject_latency", "success").Inc()
+	r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: latency experiment completed on %s (resolved)", expID, service), Service: service})
 	return nil
 }
 
 // ExecuteSpikeCPU wraps experiments.SpikeCPU with safety checks, auto-abort, and rollback logic.
 func (r *SafetyRunner) ExecuteSpikeCPU(ctx context.Context, namespace, podName string, durationSec int) error {
+	expID, service := getExpIDAndService(ctx, extractServiceName("", podName))
 	if r.dryRun {
 		fmt.Printf("[DRY-RUN] Would spike CPU (%ds) in pod %q in namespace %q\n", durationSec, podName, namespace)
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventTargetSelected, Level: "warn", Message: fmt.Sprintf("[%s] target_selected: targeting pod %q in service %q", expID, podName, service), Service: service})
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: simulated CPU spike complete (resolved)", expID), Service: service})
 		return nil
 	}
 
 	if err := CheckBlastRadiusByPodName(ctx, r.client, namespace, podName, 1, r.maxBlastRadiusPercent); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "blocked").Inc()
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventBlocked, Level: "error", Message: fmt.Sprintf("[%s] blocked: %v", expID, err), Service: service})
 		return err
 	}
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "aborted").Inc()
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventAborted, Level: "error", Message: fmt.Sprintf("[%s] aborted: %v", expID, err), Service: service})
 		return err
 	}
+
+	r.publish(events.Event{ExperimentID: expID, Type: events.EventTargetSelected, Level: "warn", Message: fmt.Sprintf("[%s] target_selected: targeting pod %q in service %q for CPU spike", expID, podName, service), Service: service})
 
 	if err := experiments.SpikeCPU(ctx, r.client, namespace, podName, durationSec); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "failed").Inc()
@@ -240,10 +339,12 @@ func (r *SafetyRunner) ExecuteSpikeCPU(ctx context.Context, namespace, podName s
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
 		_ = experiments.RemoveCPUStress(ctx, r.client, namespace, podName)
 		metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "aborted").Inc()
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventAborted, Level: "error", Message: fmt.Sprintf("[%s] aborted: auto-abort triggered and CPU stress rolled back: %v", expID, err), Service: service})
 		return fmt.Errorf("auto-abort triggered: %w (in-progress experiment rolled back)", err)
 	}
 
 	metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "success").Inc()
+	r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: CPU spike completed on %s (resolved)", expID, service), Service: service})
 	return nil
 }
 

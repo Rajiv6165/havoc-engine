@@ -3,6 +3,7 @@ package safety
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	corev1 "k8s.io/api/core/v1"
@@ -26,10 +27,13 @@ func TestMetricsIncrementAfterExperiment(t *testing.T) {
 		},
 	})
 
-	checker := metrics.NewPrometheusMetricsChecker(1.0)
+	checker := MetricsCheckFunc(func(ctx context.Context, namespace string) (float64, error) {
+		return 1.0, nil
+	})
 	runner := NewSafetyRunner(client, 100.0, 10.0, false, checker)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
 	_, _, err := runner.ExecuteKillPod(ctx, "default", "app=demo")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
