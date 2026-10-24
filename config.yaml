@@ -19,3 +19,41 @@ scheduler:
   minExecutions: 1
   maxExecutions: 3
   period: "week"
+
+server:
+  port: 8080
+  ws_port: 9091
+  metrics_port: 9090
+  allowed_cors:
+    - "http://localhost:3000"
+    - "http://127.0.0.1:3000"
+
+topology:
+  nodes:
+    - id: "api-gateway"
+      label: "api-gateway"
+      podCount: 3
+    - id: "payment-service"
+      label: "payment-service"
+      podCount: 2
+    - id: "user-service"
+      label: "user-service"
+      podCount: 4
+    - id: "database-service"
+      label: "database-service"
+      podCount: 1
+    - id: "queue-service"
+      label: "queue-service"
+      podCount: 2
+  edges:
+    - source: "api-gateway"
+      target: "payment-service"
+    - source: "api-gateway"
+      target: "user-service"
+    - source: "payment-service"
+      target: "database-service"
+    - source: "payment-service"
+      target: "queue-service"
+    - source: "user-service"
+      target: "queue-service"
+
