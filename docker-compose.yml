@@ -13,6 +13,8 @@ services:
   havoc-engine:
     build: .
     ports:
+      - "8080:8080"
+      - "9091:9091"
       - "9090:9090"
     command: ["serve"]
     environment:
@@ -35,14 +37,16 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_ENGINE_API: "http://havoc-engine:9090"
+      HAVOC_API_URL: "http://havoc-engine:8080"
+      NEXT_PUBLIC_ENGINE_API: "http://localhost:8080"
+      NEXT_PUBLIC_WS_URL: "ws://localhost:9091"
     depends_on:
       - havoc-engine
 
   prometheus:
     image: prom/prometheus:latest
     ports:
-      - "9091:9090"
+      - "9092:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     depends_on:

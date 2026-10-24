@@ -23,8 +23,8 @@ WORKDIR /app
 COPY --from=builder /app/havoc-engine .
 COPY --from=builder /app/config.yaml .
 
-# Expose port 9090 for Prometheus metrics
-EXPOSE 9090
+# Expose API (8080), metrics (9090), and WebSocket (9091)
+EXPOSE 8080 9090 9091
 
 # Command to run the executable
 ENTRYPOINT ["./havoc-engine"]
