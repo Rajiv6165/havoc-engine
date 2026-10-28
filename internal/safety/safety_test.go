@@ -104,7 +104,7 @@ func TestSafety_AutoAbortMidRun(t *testing.T) {
 	ctx := context.Background()
 	runner := NewSafetyRunner(fakeClient, 30.0, 5.0, false, mockChecker)
 
-	err := runner.ExecuteInjectLatency(ctx, "default", "demo-pod-1", 500)
+	_, err := runner.ExecuteInjectLatency(ctx, "default", "demo-pod-1", 500)
 	if err == nil {
 		t.Fatalf("expected auto-abort error, got nil")
 	}
@@ -156,14 +156,20 @@ func TestSafety_DryRunMode(t *testing.T) {
 		t.Errorf("expected dry-run indication in returned pod string, got %s", deletedPod)
 	}
 
-	err = runner.ExecuteInjectLatency(ctx, "default", "demo-pod-1", 500)
+	recLatency, err := runner.ExecuteInjectLatency(ctx, "default", "demo-pod-1", 500)
 	if err != nil {
 		t.Fatalf("expected dry-run inject-latency to succeed without error, got %v", err)
 	}
+	if recLatency == nil {
+		t.Errorf("expected non-nil recovery time in dry-run inject-latency")
+	}
 
-	err = runner.ExecuteSpikeCPU(ctx, "default", "demo-pod-1", 30)
+	recCPU, err := runner.ExecuteSpikeCPU(ctx, "default", "demo-pod-1", 30)
 	if err != nil {
 		t.Fatalf("expected dry-run spike-cpu to succeed without error, got %v", err)
+	}
+	if recCPU == nil {
+		t.Errorf("expected non-nil recovery time in dry-run spike-cpu")
 	}
 
 	// Verify Kubernetes API objects were NOT modified

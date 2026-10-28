@@ -190,9 +190,9 @@ func (s *Scheduler) runExperiment(ctx context.Context, file string) error {
 	case experimentdef.ActionKillPod:
 		_, _, expErr = runner.ExecuteKillPod(ctx, exp.Target.Namespace, exp.Target.LabelSelector)
 	case experimentdef.ActionInjectLatency:
-		expErr = runner.ExecuteInjectLatency(ctx, exp.Target.Namespace, exp.Target.PodName, exp.Params.DelayMs)
+		_, expErr = runner.ExecuteInjectLatency(ctx, exp.Target.Namespace, exp.Target.PodName, exp.Params.DelayMs)
 	case experimentdef.ActionSpikeCPU:
-		expErr = runner.ExecuteSpikeCPU(ctx, exp.Target.Namespace, exp.Target.PodName, exp.Params.DurationSec)
+		_, expErr = runner.ExecuteSpikeCPU(ctx, exp.Target.Namespace, exp.Target.PodName, exp.Params.DurationSec)
 	default:
 		expErr = fmt.Errorf("unknown action: %s", exp.Action)
 	}

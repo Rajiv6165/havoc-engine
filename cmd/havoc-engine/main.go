@@ -102,11 +102,11 @@ func main() {
 			}
 
 			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL))
-			err = runner.ExecuteInjectLatency(context.Background(), ns, podName, delayMs)
+			recoveryTimeMs, err := runner.ExecuteInjectLatency(context.Background(), ns, podName, delayMs)
 			
 			// Scoring & Storage logic
 			if !dryRun {
-				recordExperiment(cfg, "inject-latency", ns, nil, err)
+				recordExperiment(cfg, "inject-latency", ns, recoveryTimeMs, err)
 			}
 
 			if err != nil {
@@ -142,11 +142,11 @@ func main() {
 			}
 
 			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL))
-			err = runner.ExecuteSpikeCPU(context.Background(), ns, podName, durationSec)
+			recoveryTimeMs, err := runner.ExecuteSpikeCPU(context.Background(), ns, podName, durationSec)
 			
 			// Scoring & Storage logic
 			if !dryRun {
-				recordExperiment(cfg, "spike-cpu", ns, nil, err)
+				recordExperiment(cfg, "spike-cpu", ns, recoveryTimeMs, err)
 			}
 
 			if err != nil {
@@ -311,12 +311,12 @@ func main() {
 					fmt.Printf("Successfully killed pod %q for experiment %q\n", deletedPod, exp.Name)
 				}
 			case experimentdef.ActionInjectLatency:
-				expErr = runner.ExecuteInjectLatency(context.Background(), exp.Target.Namespace, exp.Target.PodName, exp.Params.DelayMs)
+				recoveryTimeMs, expErr = runner.ExecuteInjectLatency(context.Background(), exp.Target.Namespace, exp.Target.PodName, exp.Params.DelayMs)
 				if expErr == nil && !dryRun {
 					fmt.Printf("Successfully injected %dms latency into pod %q for experiment %q\n", exp.Params.DelayMs, exp.Target.PodName, exp.Name)
 				}
 			case experimentdef.ActionSpikeCPU:
-				expErr = runner.ExecuteSpikeCPU(context.Background(), exp.Target.Namespace, exp.Target.PodName, exp.Params.DurationSec)
+				recoveryTimeMs, expErr = runner.ExecuteSpikeCPU(context.Background(), exp.Target.Namespace, exp.Target.PodName, exp.Params.DurationSec)
 				if expErr == nil && !dryRun {
 					fmt.Printf("Successfully injected CPU stress (%ds) into pod %q for experiment %q\n", exp.Params.DurationSec, exp.Target.PodName, exp.Name)
 				}

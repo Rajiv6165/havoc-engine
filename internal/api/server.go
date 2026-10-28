@@ -443,7 +443,7 @@ func (s *Server) runExperiment(expID uuid.UUID, req ExperimentRequest, targetKey
 				targetPod = pods.Items[0].Name
 			}
 		}
-		expErr = runner.ExecuteInjectLatency(ctx, req.Namespace, targetPod, delay)
+		recoveryTimeMs, expErr = runner.ExecuteInjectLatency(ctx, req.Namespace, targetPod, delay)
 
 	case "spike-cpu":
 		duration := req.Params.DurationSec
@@ -456,7 +456,7 @@ func (s *Server) runExperiment(expID uuid.UUID, req ExperimentRequest, targetKey
 				targetPod = pods.Items[0].Name
 			}
 		}
-		expErr = runner.ExecuteSpikeCPU(ctx, req.Namespace, targetPod, duration)
+		recoveryTimeMs, expErr = runner.ExecuteSpikeCPU(ctx, req.Namespace, targetPod, duration)
 	}
 
 	// Safety intervention detection

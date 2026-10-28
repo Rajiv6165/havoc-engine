@@ -266,86 +266,186 @@ func (r *SafetyRunner) ExecuteKillPod(ctx context.Context, namespace, labelSelec
 	return deletedPod, recoveryTimeMs, nil
 }
 
-// ExecuteInjectLatency wraps experiments.InjectLatency with safety checks, auto-abort, and rollback logic.
-func (r *SafetyRunner) ExecuteInjectLatency(ctx context.Context, namespace, podName string, delayMs int) error {
+// ExecuteInjectLatency wraps experiments.InjectLatency with safety checks, auto-abort, rollback logic, and recovery tracking.
+func (r *SafetyRunner) ExecuteInjectLatency(ctx context.Context, namespace, podName string, delayMs int) (*int, error) {
 	expID, service := getExpIDAndService(ctx, extractServiceName("", podName))
 	if r.dryRun {
 		fmt.Printf("[DRY-RUN] Would inject %dms latency into pod %q in namespace %q\n", delayMs, podName, namespace)
 		r.publish(events.Event{ExperimentID: expID, Type: events.EventTargetSelected, Level: "warn", Message: fmt.Sprintf("[%s] target_selected: targeting pod %q in service %q", expID, podName, service), Service: service})
-		r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: simulated latency injection complete (resolved)", expID), Service: service})
-		return nil
+		simRecovery := 1000
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: simulated latency injection complete (resolved)", expID), Service: service, RecoveryMs: &simRecovery})
+		return &simRecovery, nil
 	}
 
 	if err := CheckBlastRadiusByPodName(ctx, r.client, namespace, podName, 1, r.maxBlastRadiusPercent); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("inject_latency", "blocked").Inc()
 		r.publish(events.Event{ExperimentID: expID, Type: events.EventBlocked, Level: "error", Message: fmt.Sprintf("[%s] blocked: %v", expID, err), Service: service})
-		return err
+		return nil, err
 	}
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("inject_latency", "aborted").Inc()
 		r.publish(events.Event{ExperimentID: expID, Type: events.EventAborted, Level: "error", Message: fmt.Sprintf("[%s] aborted: %v", expID, err), Service: service})
-		return err
+		return nil, err
 	}
 
 	r.publish(events.Event{ExperimentID: expID, Type: events.EventTargetSelected, Level: "warn", Message: fmt.Sprintf("[%s] target_selected: targeting pod %q in service %q for latency", expID, podName, service), Service: service})
 
+	startTime := time.Now()
 	if err := experiments.InjectLatency(ctx, r.client, namespace, podName, delayMs); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("inject_latency", "failed").Inc()
-		return err
+		return nil, err
 	}
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
 		_ = experiments.RemoveLatency(ctx, r.client, namespace, podName)
 		metrics.ExperimentsTotal.WithLabelValues("inject_latency", "aborted").Inc()
 		r.publish(events.Event{ExperimentID: expID, Type: events.EventAborted, Level: "error", Message: fmt.Sprintf("[%s] aborted: auto-abort triggered and latency rolled back: %v", expID, err), Service: service})
-		return fmt.Errorf("auto-abort triggered: %w (in-progress experiment rolled back)", err)
+		return nil, fmt.Errorf("auto-abort triggered: %w (in-progress experiment rolled back)", err)
 	}
 
 	metrics.ExperimentsTotal.WithLabelValues("inject_latency", "success").Inc()
-	r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: latency experiment completed on %s (resolved)", expID, service), Service: service})
-	return nil
+
+	r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovering, Level: "info", Message: fmt.Sprintf("[%s] recovering: waiting for service %q pod %q to recover", expID, service, podName), Service: service})
+	recoveryTimeMs := watchEphemeralContainerRecovery(ctx, r.client, namespace, podName, startTime)
+	if recoveryTimeMs != nil {
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: service %q pod %q recovered in %dms (resolved)", expID, service, podName, *recoveryTimeMs), Service: service, RecoveryMs: recoveryTimeMs})
+	} else {
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: latency experiment completed on %s (resolved)", expID, service), Service: service})
+	}
+	return recoveryTimeMs, nil
 }
 
-// ExecuteSpikeCPU wraps experiments.SpikeCPU with safety checks, auto-abort, and rollback logic.
-func (r *SafetyRunner) ExecuteSpikeCPU(ctx context.Context, namespace, podName string, durationSec int) error {
+// ExecuteSpikeCPU wraps experiments.SpikeCPU with safety checks, auto-abort, rollback logic, and recovery tracking.
+func (r *SafetyRunner) ExecuteSpikeCPU(ctx context.Context, namespace, podName string, durationSec int) (*int, error) {
 	expID, service := getExpIDAndService(ctx, extractServiceName("", podName))
 	if r.dryRun {
 		fmt.Printf("[DRY-RUN] Would spike CPU (%ds) in pod %q in namespace %q\n", durationSec, podName, namespace)
 		r.publish(events.Event{ExperimentID: expID, Type: events.EventTargetSelected, Level: "warn", Message: fmt.Sprintf("[%s] target_selected: targeting pod %q in service %q", expID, podName, service), Service: service})
-		r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: simulated CPU spike complete (resolved)", expID), Service: service})
-		return nil
+		simRecovery := 1000
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: simulated CPU spike complete (resolved)", expID), Service: service, RecoveryMs: &simRecovery})
+		return &simRecovery, nil
 	}
 
 	if err := CheckBlastRadiusByPodName(ctx, r.client, namespace, podName, 1, r.maxBlastRadiusPercent); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "blocked").Inc()
 		r.publish(events.Event{ExperimentID: expID, Type: events.EventBlocked, Level: "error", Message: fmt.Sprintf("[%s] blocked: %v", expID, err), Service: service})
-		return err
+		return nil, err
 	}
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "aborted").Inc()
 		r.publish(events.Event{ExperimentID: expID, Type: events.EventAborted, Level: "error", Message: fmt.Sprintf("[%s] aborted: %v", expID, err), Service: service})
-		return err
+		return nil, err
 	}
 
 	r.publish(events.Event{ExperimentID: expID, Type: events.EventTargetSelected, Level: "warn", Message: fmt.Sprintf("[%s] target_selected: targeting pod %q in service %q for CPU spike", expID, podName, service), Service: service})
 
+	startTime := time.Now()
 	if err := experiments.SpikeCPU(ctx, r.client, namespace, podName, durationSec); err != nil {
 		metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "failed").Inc()
-		return err
+		return nil, err
 	}
 
 	if err := CheckAutoAbort(ctx, r.metricsChecker, namespace, r.abortOnErrorRatePercent); err != nil {
 		_ = experiments.RemoveCPUStress(ctx, r.client, namespace, podName)
 		metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "aborted").Inc()
 		r.publish(events.Event{ExperimentID: expID, Type: events.EventAborted, Level: "error", Message: fmt.Sprintf("[%s] aborted: auto-abort triggered and CPU stress rolled back: %v", expID, err), Service: service})
-		return fmt.Errorf("auto-abort triggered: %w (in-progress experiment rolled back)", err)
+		return nil, fmt.Errorf("auto-abort triggered: %w (in-progress experiment rolled back)", err)
 	}
 
 	metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "success").Inc()
-	r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: CPU spike completed on %s (resolved)", expID, service), Service: service})
-	return nil
+
+	r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovering, Level: "info", Message: fmt.Sprintf("[%s] recovering: waiting for service %q pod %q to recover", expID, service, podName), Service: service})
+	recoveryTimeMs := watchEphemeralContainerRecovery(ctx, r.client, namespace, podName, startTime)
+	if recoveryTimeMs != nil {
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: service %q pod %q recovered in %dms (resolved)", expID, service, podName, *recoveryTimeMs), Service: service, RecoveryMs: recoveryTimeMs})
+	} else {
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventRecovered, Level: "info", Message: fmt.Sprintf("[%s] recovered: CPU spike completed on %s (resolved)", expID, service), Service: service})
+	}
+	return recoveryTimeMs, nil
+}
+
+func watchEphemeralContainerRecovery(ctx context.Context, client kubernetes.Interface, namespace, podName string, startTime time.Time) *int {
+	if client == nil {
+		return nil
+	}
+
+	watcher, err := client.CoreV1().Pods(namespace).Watch(ctx, metav1.ListOptions{})
+	if err != nil {
+		fmt.Printf("failed to watch ephemeral container recovery: %v\n", err)
+		return nil
+	}
+	defer watcher.Stop()
+
+	timeout := time.After(5 * time.Minute)
+
+	checkPod := func(pod *corev1.Pod) *int {
+		if pod == nil || pod.Name != podName {
+			return nil
+		}
+
+		ephemeralDone := false
+		if len(pod.Status.EphemeralContainerStatuses) > 0 {
+			ephemeralDone = true
+			for _, cs := range pod.Status.EphemeralContainerStatuses {
+				if cs.State.Terminated == nil {
+					ephemeralDone = false
+					break
+				}
+			}
+		} else if len(pod.Spec.EphemeralContainers) == 0 {
+			ephemeralDone = true
+		}
+
+		podReady := false
+		for _, cond := range pod.Status.Conditions {
+			if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
+				podReady = true
+				break
+			}
+		}
+
+		if ephemeralDone && podReady {
+			recoveryTimeSec := time.Since(startTime).Seconds()
+			metrics.PodRecoverySeconds.Observe(recoveryTimeSec)
+			ms := int(time.Since(startTime).Milliseconds())
+			if ms <= 0 {
+				ms = 1
+			}
+			return &ms
+		}
+		return nil
+	}
+
+	if pod, err := client.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{}); err == nil {
+		if res := checkPod(pod); res != nil {
+			return res
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-timeout:
+			fmt.Printf("timeout watching for pod %q recovery in namespace %q\n", podName, namespace)
+			return nil
+		case event, ok := <-watcher.ResultChan():
+			if !ok {
+				return nil
+			}
+			if event.Type == watch.Modified || event.Type == watch.Added {
+				pod, ok := event.Object.(*corev1.Pod)
+				if !ok {
+					continue
+				}
+				if res := checkPod(pod); res != nil {
+					return res
+				}
+			}
+		}
+	}
 }
 
 func watchPodRecovery(ctx context.Context, client kubernetes.Interface, namespace, labelSelector string, killTime time.Time) *int {
