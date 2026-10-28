@@ -115,4 +115,13 @@ func TestPrometheusMetricsChecker_UnreachableFallback(t *testing.T) {
 	if rate != 0.0 {
 		t.Errorf("expected rate 0.0 fallback, got %v", rate)
 	}
+
+	// Repeated call should also succeed and fall back to 0 (warnOnce prevents duplicate warnings)
+	rate2, err := checker.GetErrorRate(context.Background(), "default")
+	if err != nil {
+		t.Fatalf("expected no error from second call, got: %v", err)
+	}
+	if rate2 != 0.0 {
+		t.Errorf("expected rate 0.0 on second call, got %v", rate2)
+	}
 }

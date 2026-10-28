@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -383,5 +385,174 @@ func TestAPI_CORSMiddleware(t *testing.T) {
 
 	if getW.Header().Get("Access-Control-Allow-Origin") != "http://localhost:3000" {
 		t.Errorf("expected CORS header on GET, got %q", getW.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestAPI_BearerAuth(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: "default", Labels: map[string]string{"app": "demo"}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-2", Namespace: "default", Labels: map[string]string{"app": "demo"}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-3", Namespace: "default", Labels: map[string]string{"app": "demo"}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-4", Namespace: "default", Labels: map[string]string{"app": "demo"}}},
+	)
+
+	cfg := &config.Config{
+		DefaultNamespace: "default",
+		API: config.APIConfig{
+			Token:               "my-secret-token",
+			RequireAuthForReads: false,
+		},
+		Server: config.ServerConfig{
+			Port: 8080,
+		},
+	}
+
+	hub := events.NewHub()
+	defer hub.Close()
+
+	srv := NewServer(cfg, client, nil, hub, nil)
+
+	body := []byte(`{"action":"kill-pod","namespace":"default","selector":"app=demo"}`)
+
+	// 1. POST without token -> 401
+	reqNoToken := httptest.NewRequest(http.MethodPost, "/api/experiments", bytes.NewReader(body))
+	reqNoToken.Header.Set("Content-Type", "application/json")
+	wNoToken := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(wNoToken, reqNoToken)
+
+	if wNoToken.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401 for missing token, got %d", wNoToken.Code)
+	}
+
+	// 2. POST with invalid token -> 401
+	reqBadToken := httptest.NewRequest(http.MethodPost, "/api/experiments", bytes.NewReader(body))
+	reqBadToken.Header.Set("Content-Type", "application/json")
+	reqBadToken.Header.Set("Authorization", "Bearer wrong-token")
+	wBadToken := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(wBadToken, reqBadToken)
+
+	if wBadToken.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401 for wrong token, got %d", wBadToken.Code)
+	}
+
+	// 3. POST with valid token -> 202
+	reqValidToken := httptest.NewRequest(http.MethodPost, "/api/experiments", bytes.NewReader(body))
+	reqValidToken.Header.Set("Content-Type", "application/json")
+	reqValidToken.Header.Set("Authorization", "Bearer my-secret-token")
+	wValidToken := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(wValidToken, reqValidToken)
+
+	if wValidToken.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202 for valid token, got %d", wValidToken.Code)
+	}
+
+	// 4. GET /api/status stays open when RequireAuthForReads is false
+	reqGetOpen := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	wGetOpen := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(wGetOpen, reqGetOpen)
+
+	if wGetOpen.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for open GET /api/status, got %d", wGetOpen.Code)
+	}
+
+	// 5. GET requires token when RequireAuthForReads is true
+	cfg.API.RequireAuthForReads = true
+	reqGetLocked := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	wGetLocked := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(wGetLocked, reqGetLocked)
+
+	if wGetLocked.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401 for locked GET without token, got %d", wGetLocked.Code)
+	}
+
+	reqGetAuth := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	reqGetAuth.Header.Set("Authorization", "Bearer my-secret-token")
+	wGetAuth := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(wGetAuth, reqGetAuth)
+
+	if wGetAuth.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for locked GET with valid token, got %d", wGetAuth.Code)
+	}
+}
+
+func TestAPI_RateLimit(t *testing.T) {
+	cfg := &config.Config{
+		DefaultNamespace: "default",
+		Server: config.ServerConfig{
+			Port: 8080,
+		},
+	}
+
+	hub := events.NewHub()
+	defer hub.Close()
+
+	srv := NewServer(cfg, nil, nil, hub, nil)
+
+	// Make 10 requests from the same client IP with different targets
+	for i := 1; i <= 10; i++ {
+		body := []byte(fmt.Sprintf(`{"action":"kill-pod","namespace":"default","selector":"app=demo-%d"}`, i))
+		req := httptest.NewRequest(http.MethodPost, "/api/experiments", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "10.0.0.5:12345"
+		w := httptest.NewRecorder()
+		srv.httpServer.Handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("expected status 202 on request %d, got %d: %s", i, w.Code, w.Body.String())
+		}
+	}
+
+	// 11th request from the same IP should trigger rate limit (429)
+	body11 := []byte(`{"action":"kill-pod","namespace":"default","selector":"app=demo-11"}`)
+	req11 := httptest.NewRequest(http.MethodPost, "/api/experiments", bytes.NewReader(body11))
+	req11.Header.Set("Content-Type", "application/json")
+	req11.RemoteAddr = "10.0.0.5:12345"
+	w11 := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w11, req11)
+
+	if w11.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected status 429 for rate limited request, got %d: %s", w11.Code, w11.Body.String())
+	}
+
+	var errResp map[string]string
+	_ = json.NewDecoder(w11.Body).Decode(&errResp)
+	if !strings.Contains(errResp["error"], "rate limit exceeded") {
+		t.Errorf("expected rate limit error message, got: %v", errResp)
+	}
+}
+
+func TestAPI_DuplicateConcurrentExperiment(t *testing.T) {
+	cfg := &config.Config{
+		DefaultNamespace: "default",
+		Server: config.ServerConfig{
+			Port: 8080,
+		},
+	}
+
+	hub := events.NewHub()
+	defer hub.Close()
+
+	srv := NewServer(cfg, nil, nil, hub, nil)
+
+	// Mark target "default/app=active-service" as currently active
+	srv.activeMu.Lock()
+	srv.activeTargets["default/app=active-service"] = true
+	srv.activeMu.Unlock()
+
+	body := []byte(`{"action":"kill-pod","namespace":"default","selector":"app=active-service"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/experiments", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected status 409 Conflict, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var errResp map[string]string
+	_ = json.NewDecoder(w.Body).Decode(&errResp)
+	if !strings.Contains(errResp["error"], "active experiment is already running") {
+		t.Errorf("expected conflict message about active experiment, got: %v", errResp)
 	}
 }

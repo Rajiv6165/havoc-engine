@@ -120,6 +120,9 @@ func (r *SafetyRunner) publish(event events.Event) {
 
 // CheckBlastRadiusBySelector checks if targeting targetCount pods out of total matching pods exceeds maxPercent.
 func CheckBlastRadiusBySelector(ctx context.Context, client kubernetes.Interface, namespace, labelSelector string, targetCount int, maxPercent float64) error {
+	if client == nil {
+		return fmt.Errorf("kubernetes client is not initialized")
+	}
 	if namespace == "" {
 		return fmt.Errorf("namespace cannot be empty")
 	}
@@ -149,6 +152,9 @@ func CheckBlastRadiusBySelector(ctx context.Context, client kubernetes.Interface
 
 // CheckBlastRadiusByPodName checks if targeting a specific pod exceeds maxPercent within its workload matching group.
 func CheckBlastRadiusByPodName(ctx context.Context, client kubernetes.Interface, namespace, podName string, targetCount int, maxPercent float64) error {
+	if client == nil {
+		return fmt.Errorf("kubernetes client is not initialized")
+	}
 	if namespace == "" {
 		return fmt.Errorf("namespace cannot be empty")
 	}

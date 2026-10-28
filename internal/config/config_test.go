@@ -42,4 +42,36 @@ func TestLoadConfig_NonExistentFile(t *testing.T) {
 	if cfg.AbortOnErrorRatePercent != 5.0 {
 		t.Errorf("expected default AbortOnErrorRatePercent 5.0, got %f", cfg.AbortOnErrorRatePercent)
 	}
+	if cfg.Prometheus.URL != "http://localhost:9092" {
+		t.Errorf("expected default Prometheus URL 'http://localhost:9092', got '%s'", cfg.Prometheus.URL)
+	}
+	if cfg.Server.Host != "127.0.0.1" {
+		t.Errorf("expected default Server.Host '127.0.0.1', got '%s'", cfg.Server.Host)
+	}
+}
+
+func TestLoadConfig_PrometheusAndEnvOverrides(t *testing.T) {
+	os.Setenv("PROMETHEUS_URL", "http://prometheus:9090")
+	os.Setenv("HAVOC_API_TOKEN", "test-secret-token")
+	os.Setenv("HAVOC_BIND_ADDRESS", "0.0.0.0")
+	defer func() {
+		os.Unsetenv("PROMETHEUS_URL")
+		os.Unsetenv("HAVOC_API_TOKEN")
+		os.Unsetenv("HAVOC_BIND_ADDRESS")
+	}()
+
+	cfg, err := LoadConfig("non_existent_file.yaml")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if cfg.Prometheus.URL != "http://prometheus:9090" {
+		t.Errorf("expected Prometheus URL override 'http://prometheus:9090', got '%s'", cfg.Prometheus.URL)
+	}
+	if cfg.API.Token != "test-secret-token" {
+		t.Errorf("expected API token override 'test-secret-token', got '%s'", cfg.API.Token)
+	}
+	if cfg.Server.Host != "0.0.0.0" {
+		t.Errorf("expected Host override '0.0.0.0', got '%s'", cfg.Server.Host)
+	}
 }
