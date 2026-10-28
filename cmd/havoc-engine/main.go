@@ -179,7 +179,9 @@ func main() {
 			if pgRepo, err := storage.NewPostgresRepository(cfg.DatabaseDSN); err == nil {
 				repo = pgRepo
 				defer pgRepo.Close()
-				_ = pgRepo.RunMigrations(context.Background())
+				if err := pgRepo.RunMigrations(context.Background()); err != nil {
+					fmt.Printf("Warning: failed to run database migrations: %v\n", err)
+				}
 			} else {
 				fmt.Printf("Warning: failed to connect to database: %v. Running without persistent storage.\n", err)
 			}
@@ -508,7 +510,9 @@ func main() {
 			}
 			defer repo.Close()
 
-			_ = repo.RunMigrations(context.Background())
+			if err := repo.RunMigrations(context.Background()); err != nil {
+				return fmt.Errorf("failed to run database migrations: %w", err)
+			}
 
 			metrics.StartMetricsServer(cfg.Server.MetricsPort)
 
@@ -622,7 +626,9 @@ func recordExperiment(cfg *config.Config, expType, namespace string, recoveryTim
 	defer repo.Close()
 
 	// Ensure migrations are run (lazy init for simplicity in CLI)
-	_ = repo.RunMigrations(context.Background())
+	if err := repo.RunMigrations(context.Background()); err != nil {
+		fmt.Printf("Warning: failed to run database migrations: %v\n", err)
+	}
 
 	// Determine safety intervention
 	safetyIntervened := false

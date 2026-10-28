@@ -81,7 +81,9 @@ func TestScheduler_Tick(t *testing.T) {
 	defer repo.Close()
 
 	ctx := context.Background()
-	_ = repo.RunMigrations(ctx)
+	if err := repo.RunMigrations(ctx); err != nil {
+		t.Logf("Database migrations skipped in test environment: %v", err)
+	}
 	
 	// Ensure not paused
 	_ = repo.SetSchedulerState(ctx, false)

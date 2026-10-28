@@ -3,12 +3,19 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"fmt"
+	"io/fs"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 )
+
+//go:embed migrations/*.sql
+var migrationFS embed.FS
 
 // ExperimentResult represents the result of a chaos experiment.
 type ExperimentResult struct {
@@ -220,49 +227,70 @@ func (r *PostgresRepository) SetSchedulerState(ctx context.Context, paused bool)
 	return err
 }
 
-// RunMigrations runs the initialization SQL.
+// RunMigrations runs all numbered migration SQL files in order, tracking them in schema_migrations.
 func (r *PostgresRepository) RunMigrations(ctx context.Context) error {
-	query := `
-	CREATE TABLE IF NOT EXISTS experiments (
-		id UUID PRIMARY KEY,
-		experiment_type TEXT NOT NULL,
-		target_namespace TEXT NOT NULL,
-		recovery_time_ms INT,
-		error_rate_percent FLOAT,
-		safety_intervened BOOLEAN NOT NULL,
-		resilience_score INT NOT NULL,
-		postmortem_report TEXT,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	// 1. Ensure schema_migrations table exists
+	initQuery := `
+	CREATE TABLE IF NOT EXISTS schema_migrations (
+		version VARCHAR(255) PRIMARY KEY,
+		applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
 	`
-	_, err := r.db.ExecContext(ctx, query)
-	if err != nil {
-		return err
-	}
-	
-	alterQuery := `ALTER TABLE experiments ADD COLUMN IF NOT EXISTS postmortem_report TEXT;`
-	_, err = r.db.ExecContext(ctx, alterQuery)
-	if err != nil {
-		return err
+	if _, err := r.db.ExecContext(ctx, initQuery); err != nil {
+		return fmt.Errorf("failed to create schema_migrations table: %w", err)
 	}
 
-	schedulerQueries := `
-	CREATE TABLE IF NOT EXISTS scheduled_runs (
-		id UUID PRIMARY KEY,
-		timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		experiment_file TEXT NOT NULL,
-		outcome TEXT NOT NULL
-	);
+	// 2. Discover and sort migration files
+	entries, err := fs.ReadDir(migrationFS, "migrations")
+	if err != nil {
+		return fmt.Errorf("failed to read migrations directory: %w", err)
+	}
 
-	CREATE TABLE IF NOT EXISTS scheduler_state (
-		id INT PRIMARY KEY,
-		is_paused BOOLEAN NOT NULL DEFAULT FALSE
-	);
-	
-	INSERT INTO scheduler_state (id, is_paused) VALUES (1, FALSE) ON CONFLICT DO NOTHING;
-	`
-	_, err = r.db.ExecContext(ctx, schedulerQueries)
-	return err
+	var filenames []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+			filenames = append(filenames, entry.Name())
+		}
+	}
+	sort.Strings(filenames)
+
+	// 3. Run pending migrations in order
+	for _, filename := range filenames {
+		var applied bool
+		err := r.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)", filename).Scan(&applied)
+		if err != nil {
+			return fmt.Errorf("failed to check status of migration %s: %w", filename, err)
+		}
+		if applied {
+			continue
+		}
+
+		content, err := migrationFS.ReadFile("migrations/" + filename)
+		if err != nil {
+			return fmt.Errorf("failed to read migration file %s: %w", filename, err)
+		}
+
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction for migration %s: %w", filename, err)
+		}
+
+		if _, err := tx.ExecContext(ctx, string(content)); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("failed to execute migration %s: %w", filename, err)
+		}
+
+		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", filename); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("failed to record migration %s in schema_migrations: %w", filename, err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit transaction for migration %s: %w", filename, err)
+		}
+	}
+
+	return nil
 }
 
 // Close closes the database connection.
