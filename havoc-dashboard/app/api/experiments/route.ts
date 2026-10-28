@@ -8,8 +8,13 @@ export async function GET(request: Request) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const headers: Record<string, string> = {};
+    if (process.env.HAVOC_API_TOKEN) {
+      headers['Authorization'] = `Bearer ${process.env.HAVOC_API_TOKEN}`;
+    }
 
     const res = await fetch(`${engineUrl}/api/experiments?limit=${limit}`, {
+      headers,
       signal: controller.signal,
       cache: 'no-store',
     });
@@ -42,11 +47,16 @@ export async function POST(request: Request) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 4000);
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (process.env.HAVOC_API_TOKEN) {
+      headers['Authorization'] = `Bearer ${process.env.HAVOC_API_TOKEN}`;
+    }
+
     const res = await fetch(`${engineUrl}/api/experiments`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(body),
       signal: controller.signal,
     });
