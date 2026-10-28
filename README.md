@@ -83,8 +83,34 @@ docker-compose up --build -d
 ## ⚠️ Known Limitations & Current Status
 
 - **Live Data**: System status, chaos execution, topology graph, live log streaming, and history scores run on real backend data with automatic graceful fallback when the engine is offline.
+- **API Authentication**: The API supports simple shared bearer token authentication (`HAVOC_API_TOKEN`) rather than full multi-user role-based access control (RBAC). Any client in possession of the shared token can trigger chaos experiments.
 - **Memory Leak Action**: The "Memory Leak" button in the dashboard is not yet implemented in the Go engine (current supported actions: `kill-pod`, `inject-latency`, `spike-cpu`).
 - **Safety Error Rate Metric**: The auto-abort mechanism queries the recent chaos experiment failure rate from Prometheus rather than full application-level traffic tracing.
+
+---
+
+## 🔒 Security
+
+Havoc Engine incorporates several safeguards to ensure secure operation and protect cluster stability:
+
+- **Local Bind by Default**: The HTTP API server binds to `127.0.0.1` by default (`server.host` in `config.yaml` or `HAVOC_BIND_ADDRESS`), preventing unintended exposure on public network interfaces. Inside containerized environments such as Docker Compose, configure `HAVOC_BIND_ADDRESS: "0.0.0.0"`.
+- **Bearer Token Authorization**: When `HAVOC_API_TOKEN` is configured, all mutable endpoints (`POST /api/experiments`) require an `Authorization: Bearer <token>` header, returning `401 Unauthorized` if missing or invalid. Read-only endpoints (`GET /api/status`, `GET /api/experiments`, `GET /api/topology`) remain open for dashboard monitoring, or can require authentication by setting `api.requireAuthForReads: true` in `config.yaml`.
+- **Server-Side Token Proxying**: The Next.js dashboard routes API requests through server-side Route Handlers (`/api/...`), injecting `HAVOC_API_TOKEN` from the server environment so that secrets are never sent to or visible in client browsers.
+- **Client Rate Limiting**: The `POST /api/experiments` endpoint limits requests to 10 per minute per client IP to prevent flooding, returning `429 Too Many Requests`.
+- **Single Active Experiment Per Target**: Only one chaos experiment can run against a given service or pod target at any time. Concurrent requests for an active target are rejected with `409 Conflict`.
+
+---
+
+## ⚙️ Environment Variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `HAVOC_BIND_ADDRESS` | Network interface address to bind HTTP API server to | `127.0.0.1` |
+| `HAVOC_API_TOKEN` | Shared secret bearer token required for `POST /api/experiments` | *(empty / disabled)* |
+| `PROMETHEUS_URL` | Base URL of Prometheus server to query metrics from | `http://localhost:9092` (local) / `http://prometheus:9090` (docker) |
+| `DATABASE_URL` | PostgreSQL connection string / DSN | `postgres://postgres:postgres@localhost:5432/havoc?sslmode=disable` |
+| `ANTHROPIC_API_KEY` | Anthropic Claude API key for automated postmortem generation | *(empty / disabled)* |
+| `HAVOC_API_URL` | Engine URL used by Next.js dashboard server-side proxy | `http://localhost:8080` (or `http://havoc-engine:8080` in docker) |
 
 ---
 
