@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -60,7 +61,8 @@ func StartMetricsServer(port int) {
 
 // PrometheusMetricsChecker implements safety.MetricsChecker using a real Prometheus client.
 type PrometheusMetricsChecker struct {
-	client *PromClient
+	client   *PromClient
+	warnOnce sync.Once
 }
 
 // NewPrometheusMetricsChecker creates a new PrometheusMetricsChecker.
@@ -74,7 +76,9 @@ func NewPrometheusMetricsChecker(promBaseURL string) *PrometheusMetricsChecker {
 func (c *PrometheusMetricsChecker) GetErrorRate(ctx context.Context, namespace string) (float64, error) {
 	rate, err := c.client.QueryErrorRate(ctx)
 	if err != nil {
-		fmt.Printf("Warning: Failed to query Prometheus for error rate: %v. Falling back to 0%%.\n", err)
+		c.warnOnce.Do(func() {
+			fmt.Printf("Warning: Failed to query Prometheus at %s for error rate: %v. Falling back to 0%% (warning logged once).\n", c.client.BaseURL, err)
+		})
 		rate = 0.0
 	}
 

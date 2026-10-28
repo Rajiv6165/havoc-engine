@@ -39,9 +39,6 @@ func main() {
 		Short: "Havoc Engine is a Kubernetes chaos engineering CLI tool",
 	}
 
-	// Initialize Prometheus metrics checker with the local Prometheus endpoint
-	metricsChecker := metrics.NewPrometheusMetricsChecker("http://localhost:9090")
-
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "config.yaml", "Path to config YAML file")
 	rootCmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "", "Kubernetes namespace (defaults to config default_namespace)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Simulate execution without making actual changes")
@@ -63,7 +60,7 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metricsChecker)
+			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL))
 			deletedPod, recoveryTimeMs, err := runner.ExecuteKillPod(context.Background(), ns, selector)
 			
 			// Scoring & Storage logic
@@ -104,7 +101,7 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metricsChecker)
+			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL))
 			err = runner.ExecuteInjectLatency(context.Background(), ns, podName, delayMs)
 			
 			// Scoring & Storage logic
@@ -144,7 +141,7 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metricsChecker)
+			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL))
 			err = runner.ExecuteSpikeCPU(context.Background(), ns, podName, durationSec)
 			
 			// Scoring & Storage logic
@@ -198,8 +195,7 @@ func main() {
 			defer hub.Close()
 
 			// Metrics checker
-			promURL := fmt.Sprintf("http://localhost:%d", cfg.Server.MetricsPort)
-			srvMetricsChecker := metrics.NewPrometheusMetricsChecker(promURL)
+			srvMetricsChecker := metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL)
 
 			// 1. Metrics server
 			metricsServer := metrics.NewMetricsServer(cfg.Server.MetricsPort)
@@ -296,7 +292,7 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			runner := safety.NewSafetyRunner(client, maxBlast, abortThreshold, dryRun, metricsChecker)
+			runner := safety.NewSafetyRunner(client, maxBlast, abortThreshold, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL))
 
 			if dryRun {
 				fmt.Printf("[DRY-RUN] Executing experiment %q (%s)\n", exp.Name, exp.Action)
@@ -517,7 +513,7 @@ func main() {
 			metrics.StartMetricsServer(cfg.Server.MetricsPort)
 
 			experimentsDir := "experiments"
-			sched := scheduler.NewScheduler(cfg, repo, scheduler.RealClock{}, experimentsDir, metricsChecker)
+			sched := scheduler.NewScheduler(cfg, repo, scheduler.RealClock{}, experimentsDir, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL))
 			sched.Run(context.Background())
 			return nil
 		},
@@ -636,7 +632,7 @@ func recordExperiment(cfg *config.Config, expType, namespace string, recoveryTim
 
 	// For error rate, we'd ideally query the prometheus backend, but since this is CLI-driven,
 	// let's grab the current error rate from our real metrics checker.
-	checker := metrics.NewPrometheusMetricsChecker("http://localhost:9090")
+	checker := metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL)
 	var errRate *float64
 	if rate, err := checker.GetErrorRate(context.Background(), namespace); err == nil {
 		errRate = &rate

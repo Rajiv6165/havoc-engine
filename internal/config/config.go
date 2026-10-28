@@ -16,11 +16,16 @@ type Config struct {
 	MaxBlastRadiusPercent   float64         `yaml:"maxBlastRadiusPercent"`
 	AbortOnErrorRatePercent float64         `yaml:"abortOnErrorRatePercent"`
 	DatabaseDSN             string          `yaml:"database_dsn"`
-	AnthropicAPIKey         string          `yaml:"anthropic_api_key"`
-	Scoring                 scoring.Config  `yaml:"scoring"`
-	Scheduler               SchedulerConfig `yaml:"scheduler"`
-	Server                  ServerConfig    `yaml:"server"`
-	Topology                TopologyConfig  `yaml:"topology"`
+	AnthropicAPIKey         string           `yaml:"anthropic_api_key"`
+	Prometheus              PrometheusConfig `yaml:"prometheus"`
+	Scoring                 scoring.Config   `yaml:"scoring"`
+	Scheduler               SchedulerConfig  `yaml:"scheduler"`
+	Server                  ServerConfig     `yaml:"server"`
+	Topology                TopologyConfig   `yaml:"topology"`
+}
+
+type PrometheusConfig struct {
+	URL string `yaml:"url"`
 }
 
 type ServerConfig struct {
@@ -70,6 +75,9 @@ func LoadConfig(path string) (*Config, error) {
 		MaxBlastRadiusPercent:   30.0,
 		AbortOnErrorRatePercent: 5.0,
 		DatabaseDSN:             "postgres://postgres:postgres@localhost:5432/havoc?sslmode=disable",
+		Prometheus: PrometheusConfig{
+			URL: "http://localhost:9092",
+		},
 		Scoring:                 scoring.DefaultConfig(),
 		Scheduler: SchedulerConfig{
 			Enabled: false,
@@ -89,6 +97,9 @@ func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if envPromURL := os.Getenv("PROMETHEUS_URL"); envPromURL != "" {
+				cfg.Prometheus.URL = envPromURL
+			}
 			return cfg, nil
 		}
 		return nil, err
@@ -96,6 +107,13 @@ func LoadConfig(path string) (*Config, error) {
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+
+	if cfg.Prometheus.URL == "" {
+		cfg.Prometheus.URL = "http://localhost:9092"
+	}
+	if envPromURL := os.Getenv("PROMETHEUS_URL"); envPromURL != "" {
+		cfg.Prometheus.URL = envPromURL
 	}
 
 	if cfg.MaxBlastRadiusPercent <= 0 {

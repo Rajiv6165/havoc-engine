@@ -3,6 +3,8 @@ default_namespace: "default"
 maxBlastRadiusPercent: 30
 abortOnErrorRatePercent: 5.0
 database_dsn: "postgres://postgres:postgres@localhost:5432/havoc?sslmode=disable"
+prometheus:
+  url: "http://localhost:9092"
 scoring:
   recoveryTimeOptimalMs: 5000
   recoveryTimeMaxMs: 30000

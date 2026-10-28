@@ -19,6 +19,7 @@ services:
     command: ["serve"]
     environment:
       DATABASE_URL: "postgres://postgres:postgres@postgres:5432/havoc?sslmode=disable"
+      PROMETHEUS_URL: "http://prometheus:9090"
     depends_on:
       - postgres
 
@@ -27,6 +28,7 @@ services:
     command: ["cron", "start"]
     environment:
       DATABASE_URL: "postgres://postgres:postgres@postgres:5432/havoc?sslmode=disable"
+      PROMETHEUS_URL: "http://prometheus:9090"
     depends_on:
       - postgres
 
