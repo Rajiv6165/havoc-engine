@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,6 +23,48 @@ import (
 	"havoc-engine/internal/storage"
 )
 
+// RateLimiter tracks client requests within a rolling time window.
+type RateLimiter struct {
+	mu       sync.Mutex
+	requests map[string][]time.Time
+	limit    int
+	window   time.Duration
+}
+
+// NewRateLimiter creates a new RateLimiter instance.
+func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
+	return &RateLimiter{
+		requests: make(map[string][]time.Time),
+		limit:    limit,
+		window:   window,
+	}
+}
+
+// Allow returns true if the client IP has not exceeded the rate limit.
+func (rl *RateLimiter) Allow(clientIP string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-rl.window)
+
+	var recent []time.Time
+	for _, t := range rl.requests[clientIP] {
+		if t.After(cutoff) {
+			recent = append(recent, t)
+		}
+	}
+
+	if len(recent) >= rl.limit {
+		rl.requests[clientIP] = recent
+		return false
+	}
+
+	recent = append(recent, now)
+	rl.requests[clientIP] = recent
+	return true
+}
+
 // Server provides HTTP API endpoints for havoc-engine.
 type Server struct {
 	httpServer     *http.Server
@@ -29,6 +73,10 @@ type Server struct {
 	repo           storage.ExperimentRepository
 	hub            *events.Hub
 	metricsChecker safety.MetricsChecker
+
+	rateLimiter   *RateLimiter
+	activeMu      sync.Mutex
+	activeTargets map[string]bool
 }
 
 // NewServer initializes a new API server.
@@ -45,6 +93,8 @@ func NewServer(
 		repo:           repo,
 		hub:            hub,
 		metricsChecker: checker,
+		rateLimiter:    NewRateLimiter(10, time.Minute),
+		activeTargets:  make(map[string]bool),
 	}
 
 	mux := http.NewServeMux()
@@ -55,19 +105,63 @@ func NewServer(
 
 	corsHandler := CORSMiddleware(cfg.Server.AllowedCORS)(mux)
 
+	host := cfg.Server.Host
+	if host == "" {
+		host = cfg.Server.BindAddress
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+
 	port := cfg.Server.Port
 	if port <= 0 {
 		port = 8080
 	}
 
 	s.httpServer = &http.Server{
-		Addr:         fmt.Sprintf(":%d", port),
+		Addr:         fmt.Sprintf("%s:%d", host, port),
 		Handler:      corsHandler,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 	}
 
 	return s
+}
+
+func (s *Server) authenticate(r *http.Request) bool {
+	if s.cfg == nil || s.cfg.API.Token == "" {
+		return true
+	}
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return false
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	return token == s.cfg.API.Token
+}
+
+func (s *Server) checkReadAuth(w http.ResponseWriter, r *http.Request) bool {
+	if s.cfg != nil && s.cfg.API.Token != "" && s.cfg.API.RequireAuthForReads {
+		if !s.authenticate(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized: missing or invalid bearer token"})
+			return false
+		}
+	}
+	return true
+}
+
+func getClientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		return strings.TrimSpace(parts[0])
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
 
 // Start runs the HTTP server.
@@ -129,6 +223,9 @@ type ServiceStatus struct {
 
 // handleGetStatus lists Deployments in configured namespaces and reports health state.
 func (s *Server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.checkReadAuth(w, r) {
+		return
+	}
 	var statuses []ServiceStatus
 
 	if s.k8sClient != nil {
@@ -193,14 +290,33 @@ type ExperimentParams struct {
 
 // handlePostExperiments accepts an experiment request, starts it in a goroutine, and returns 202.
 func (s *Server) handlePostExperiments(w http.ResponseWriter, r *http.Request) {
+	if s.cfg != nil && s.cfg.API.Token != "" && !s.authenticate(r) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized: missing or invalid bearer token"})
+		return
+	}
+
+	clientIP := getClientIP(r)
+	if s.rateLimiter != nil && !s.rateLimiter.Allow(clientIP) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "rate limit exceeded: max 10 requests per minute"})
+		return
+	}
+
 	var req ExperimentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid json body"}`, http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json body"})
 		return
 	}
 
 	if req.Action == "" {
-		http.Error(w, `{"error":"action is required"}`, http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "action is required"})
 		return
 	}
 
@@ -222,10 +338,32 @@ func (s *Server) handlePostExperiments(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	target := req.Selector
+	if target == "" {
+		target = req.Pod
+	}
+	if target == "" {
+		target = "target"
+	}
+	targetKey := req.Namespace + "/" + target
+
+	s.activeMu.Lock()
+	if s.activeTargets[targetKey] {
+		s.activeMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("an active experiment is already running on target %q in namespace %q", target, req.Namespace),
+		})
+		return
+	}
+	s.activeTargets[targetKey] = true
+	s.activeMu.Unlock()
+
 	expID := uuid.New()
 
 	// Launch experiment asynchronously
-	go s.runExperiment(expID, req)
+	go s.runExperiment(expID, req, targetKey)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -236,7 +374,13 @@ func (s *Server) handlePostExperiments(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) runExperiment(expID uuid.UUID, req ExperimentRequest) {
+func (s *Server) runExperiment(expID uuid.UUID, req ExperimentRequest, targetKey string) {
+	defer func() {
+		s.activeMu.Lock()
+		delete(s.activeTargets, targetKey)
+		s.activeMu.Unlock()
+	}()
+
 	service := req.Selector
 	if idx := strings.Index(service, "="); idx != -1 {
 		service = service[idx+1:]
@@ -387,6 +531,9 @@ func (s *Server) runExperiment(expID uuid.UUID, req ExperimentRequest) {
 
 // handleGetExperiments retrieves recent experiments from the database.
 func (s *Server) handleGetExperiments(w http.ResponseWriter, r *http.Request) {
+	if !s.checkReadAuth(w, r) {
+		return
+	}
 	limit := 20
 	if lStr := r.URL.Query().Get("limit"); lStr != "" {
 		if l, err := strconv.Atoi(lStr); err == nil && l > 0 {
@@ -444,6 +591,9 @@ type TopologyEdge struct {
 
 // handleGetTopology builds the service dependency graph from deployment annotations or fallback.
 func (s *Server) handleGetTopology(w http.ResponseWriter, r *http.Request) {
+	if !s.checkReadAuth(w, r) {
+		return
+	}
 	resp := s.buildTopology(r.Context())
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)

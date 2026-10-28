@@ -222,7 +222,7 @@ func main() {
 			}()
 
 			fmt.Println("Havoc Engine Control Plane running:")
-			fmt.Printf("  -> HTTP API:        http://localhost:%d\n", cfg.Server.Port)
+			fmt.Printf("  -> HTTP API:        http://%s:%d\n", cfg.Server.Host, cfg.Server.Port)
 			fmt.Printf("  -> WebSocket Event: ws://localhost:%d\n", cfg.Server.WSPort)
 			fmt.Printf("  -> Prometheus:      http://localhost:%d/metrics\n", cfg.Server.MetricsPort)
 

@@ -17,6 +17,7 @@ type Config struct {
 	AbortOnErrorRatePercent float64         `yaml:"abortOnErrorRatePercent"`
 	DatabaseDSN             string          `yaml:"database_dsn"`
 	AnthropicAPIKey         string           `yaml:"anthropic_api_key"`
+	API                     APIConfig        `yaml:"api"`
 	Prometheus              PrometheusConfig `yaml:"prometheus"`
 	Scoring                 scoring.Config   `yaml:"scoring"`
 	Scheduler               SchedulerConfig  `yaml:"scheduler"`
@@ -24,11 +25,18 @@ type Config struct {
 	Topology                TopologyConfig   `yaml:"topology"`
 }
 
+type APIConfig struct {
+	Token               string `yaml:"token"`
+	RequireAuthForReads bool   `yaml:"requireAuthForReads"`
+}
+
 type PrometheusConfig struct {
 	URL string `yaml:"url"`
 }
 
 type ServerConfig struct {
+	Host        string   `yaml:"host"`
+	BindAddress string   `yaml:"bind_address"`
 	Port        int      `yaml:"port"`
 	WSPort      int      `yaml:"ws_port"`
 	MetricsPort int      `yaml:"metrics_port"`
@@ -83,6 +91,7 @@ func LoadConfig(path string) (*Config, error) {
 			Enabled: false,
 		},
 		Server: ServerConfig{
+			Host:        "127.0.0.1",
 			Port:        8080,
 			WSPort:      9091,
 			MetricsPort: 9090,
@@ -100,6 +109,12 @@ func LoadConfig(path string) (*Config, error) {
 			if envPromURL := os.Getenv("PROMETHEUS_URL"); envPromURL != "" {
 				cfg.Prometheus.URL = envPromURL
 			}
+			if envBind := os.Getenv("HAVOC_BIND_ADDRESS"); envBind != "" {
+				cfg.Server.Host = envBind
+			}
+			if envToken := os.Getenv("HAVOC_API_TOKEN"); envToken != "" {
+				cfg.API.Token = envToken
+			}
 			return cfg, nil
 		}
 		return nil, err
@@ -114,6 +129,20 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if envPromURL := os.Getenv("PROMETHEUS_URL"); envPromURL != "" {
 		cfg.Prometheus.URL = envPromURL
+	}
+
+	if cfg.Server.Host == "" {
+		if cfg.Server.BindAddress != "" {
+			cfg.Server.Host = cfg.Server.BindAddress
+		} else {
+			cfg.Server.Host = "127.0.0.1"
+		}
+	}
+	if envBind := os.Getenv("HAVOC_BIND_ADDRESS"); envBind != "" {
+		cfg.Server.Host = envBind
+	}
+	if envToken := os.Getenv("HAVOC_API_TOKEN"); envToken != "" {
+		cfg.API.Token = envToken
 	}
 
 	if cfg.MaxBlastRadiusPercent <= 0 {

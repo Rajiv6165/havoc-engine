@@ -23,6 +23,7 @@ scheduler:
   period: "week"
 
 server:
+  host: "127.0.0.1"
   port: 8080
   ws_port: 9091
   metrics_port: 9090
