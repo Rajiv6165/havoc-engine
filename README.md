@@ -1,4 +1,5 @@
 # Havoc Engine 💥
+[![CI](https://github.com/Rajiv6165/havoc-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Rajiv6165/havoc-engine/actions/workflows/ci.yml)
 
 `havoc-engine` is a lightweight, testable Kubernetes chaos engineering CLI tool and real-time dashboard. It allows developers and site reliability engineers to inject controlled failure experiments into Kubernetes clusters to validate resiliency, providing a score based on how well the system recovers.
 
