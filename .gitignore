@@ -1,12 +1,37 @@
-# Binaries
-/*.exe
-/havoc-engine
+# Binaries and compiled outputs
+*.exe
+*.exe~
+havoc-engine
+bin/
+dist/
 
-# Output / Test artifacts
+# Test and coverage artifacts
 *.test
 *.out
+*.prof
+coverage/
 
-cmd/havoc-engine/havoc-engine.exe
+# Node.js and Next.js artifacts
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
 
-# Environment variables
+# Environment and secrets
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Operating system / IDE files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
