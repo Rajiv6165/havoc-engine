@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"havoc-engine/internal/api"
 	"havoc-engine/internal/config"
@@ -609,7 +610,161 @@ func main() {
 
 	cronCmd.AddCommand(cronStartCmd, cronPauseCmd, cronResumeCmd, cronStatusCmd)
 
-	rootCmd.AddCommand(killPodCmd, injectLatencyCmd, spikeCPUCmd, serveCmd, runCmd, historyCmd, scoreCmd, reportCmd, cronCmd)
+	// seed-demo command
+	seedDemoCmd := &cobra.Command{
+		Use:   "seed-demo",
+		Short: "Seed the database and demo namespace with safe sample chaos experiments and AI postmortems",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			repo, err := storage.NewPostgresRepository(cfg.DatabaseDSN)
+			if err != nil {
+				return fmt.Errorf("failed to connect to database: %w", err)
+			}
+			defer repo.Close()
+
+			if err := repo.RunMigrations(context.Background()); err != nil {
+				return fmt.Errorf("failed to run database migrations: %w", err)
+			}
+
+			fmt.Println("[seed-demo] Connected to database and verified migrations.")
+
+			// Check if we should insert baseline history records
+			existing, err := repo.GetRecentExperiments(context.Background(), 10)
+			if err != nil {
+				return fmt.Errorf("failed to query existing experiments: %w", err)
+			}
+
+			now := time.Now()
+			if len(existing) < 3 {
+				fmt.Println("[seed-demo] Seeding baseline experiment history, resilience scores, and AI postmortems...")
+
+				pmReport1 := `### Incident Postmortem: Experiment kill-pod-frontend
+**Target:** ` + "`frontend`" + ` in namespace ` + "`demo`" + `
+**Experiment Type:** Pod Termination (` + "`kill-pod`" + `)
+**Resilience Score:** 92 / 100
+
+#### Executive Summary
+A controlled pod termination experiment was conducted against the ` + "`frontend`" + ` deployment in the ` + "`demo`" + ` namespace. The service recovered in 2.45s with an error rate of 0.25%, well within acceptable resilience SLOs.
+
+#### Root Cause Analysis
+The Kubernetes Deployment controller identified the missing pod replica and scheduled a replacement immediately. The container readiness probe passed within 2 seconds of startup.
+
+#### Recommendations
+- Current 2-replica setup provides sufficient headroom for single-instance pod failures.
+- Recommended: Maintain pod disruption budget (PDB) minAvailable=1 for production readiness.`
+
+				pmReport2 := `### Incident Postmortem: Experiment inject-latency-api
+**Target:** ` + "`api`" + ` in namespace ` + "`demo`" + `
+**Experiment Type:** Network Latency Injection (` + "`inject-latency`" + ` +500ms)
+**Resilience Score:** 84 / 100
+
+#### Executive Summary
+Injected 500ms synthetic network delay on the ` + "`api`" + ` service. Recovery completed in 4.10s with an observed error rate of 1.80%.
+
+#### Root Cause Analysis
+Downstream caller services absorbed the latency through retry mechanisms. Minor transient HTTP 504 gateway timeouts were observed before traffic stabilized.
+
+#### Recommendations
+- Tune client timeout thresholds on frontend reverse proxy to 3000ms.
+- Implement circuit breaker fallback responses for non-critical query endpoints.`
+
+				pmReport3 := `### Incident Postmortem: Experiment spike-cpu-db
+**Target:** ` + "`db`" + ` in namespace ` + "`demo`" + `
+**Experiment Type:** CPU Stress Injection (` + "`spike-cpu`" + ` 2 cores, 30s)
+**Resilience Score:** 68 / 100 (Safety Intervened)
+
+#### Executive Summary
+CPU stress was applied to the ` + "`db`" + ` service pod. The safety auto-abort mechanism intervened when the namespace error rate approached 4.20%, rolling back the stress container.
+
+#### Root Cause Analysis
+Excessive CPU contention throttled database query processing threads. The safety engine's automated watchdog successfully detected degradation and terminated the ephemeral stress container before service failure occurred.
+
+#### Recommendations
+- Configure Horizontal Pod Autoscaler (HPA) or increase CPU resource limits.
+- Safety intervention prevented SLA breach; verify alerting thresholds.`
+
+				rec1 := 2450
+				err1 := 0.25
+				r1 := &storage.ExperimentResult{
+					ID:               uuid.New(),
+					ExperimentType:   "kill-pod",
+					TargetNamespace:  "demo",
+					RecoveryTimeMs:   &rec1,
+					ErrorRatePercent: &err1,
+					SafetyIntervened: false,
+					ResilienceScore:  92,
+					PostmortemReport: &pmReport1,
+					CreatedAt:        now.Add(-25 * time.Minute),
+				}
+
+				rec2 := 4100
+				err2 := 1.80
+				r2 := &storage.ExperimentResult{
+					ID:               uuid.New(),
+					ExperimentType:   "inject-latency",
+					TargetNamespace:  "demo",
+					RecoveryTimeMs:   &rec2,
+					ErrorRatePercent: &err2,
+					SafetyIntervened: false,
+					ResilienceScore:  84,
+					PostmortemReport: &pmReport2,
+					CreatedAt:        now.Add(-15 * time.Minute),
+				}
+
+				rec3 := 6200
+				err3 := 4.20
+				r3 := &storage.ExperimentResult{
+					ID:               uuid.New(),
+					ExperimentType:   "spike-cpu",
+					TargetNamespace:  "demo",
+					RecoveryTimeMs:   &rec3,
+					ErrorRatePercent: &err3,
+					SafetyIntervened: true,
+					ResilienceScore:  68,
+					PostmortemReport: &pmReport3,
+					CreatedAt:        now.Add(-5 * time.Minute),
+				}
+
+				_ = repo.SaveExperimentResult(context.Background(), r1)
+				_ = repo.SaveExperimentResult(context.Background(), r2)
+				_ = repo.SaveExperimentResult(context.Background(), r3)
+				fmt.Println("[seed-demo] Baseline experiments and postmortems successfully recorded.")
+			} else {
+				fmt.Printf("[seed-demo] Database already contains %d experiment records.\n", len(existing))
+			}
+
+			// If cluster is reachable and demo pods exist, attempt a live safe experiment
+			client, err := k8sclient.NewClient(cfg.Kubeconfig)
+			if err == nil {
+				fmt.Println("[seed-demo] Checking Kubernetes cluster for demo pods...")
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if pods, err := client.CoreV1().Pods("demo").List(ctx, metav1.ListOptions{LabelSelector: "app=frontend"}); err == nil && len(pods.Items) > 0 {
+					fmt.Printf("[seed-demo] Found %d 'frontend' pods in 'demo' namespace. Running safe kill-pod test...\n", len(pods.Items))
+					runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, false, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL), cfg.Safety.AllowedNamespaces)
+					deletedPod, recoveryMs, expErr := runner.ExecuteKillPod(ctx, "demo", "app=frontend")
+					if expErr == nil {
+						fmt.Printf("[seed-demo] Successfully killed demo pod %s (recovered in %v ms)\n", deletedPod, recoveryMs)
+					} else {
+						fmt.Printf("[seed-demo] Note: Live experiment run note: %v\n", expErr)
+					}
+				} else {
+					fmt.Println("[seed-demo] Demo pods not yet ready in cluster; baseline history is primed and ready.")
+				}
+			} else {
+				fmt.Printf("[seed-demo] Cluster connection note: %v (baseline history primed)\n", err)
+			}
+
+			fmt.Println("[seed-demo] Demo environment seeding complete!")
+			return nil
+		},
+	}
+
+	rootCmd.AddCommand(killPodCmd, injectLatencyCmd, spikeCPUCmd, serveCmd, runCmd, historyCmd, scoreCmd, reportCmd, cronCmd, seedDemoCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

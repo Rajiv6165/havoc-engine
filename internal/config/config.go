@@ -121,6 +121,9 @@ func LoadConfig(path string) (*Config, error) {
 			if envToken := os.Getenv("HAVOC_API_TOKEN"); envToken != "" {
 				cfg.API.Token = envToken
 			}
+			if envDB := os.Getenv("DATABASE_URL"); envDB != "" {
+				cfg.DatabaseDSN = envDB
+			}
 			if envNS := os.Getenv("HAVOC_ALLOWED_NAMESPACES"); envNS != "" {
 				parts := strings.Split(envNS, ",")
 				var nsList []string
@@ -160,6 +163,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if envToken := os.Getenv("HAVOC_API_TOKEN"); envToken != "" {
 		cfg.API.Token = envToken
+	}
+	if envDB := os.Getenv("DATABASE_URL"); envDB != "" {
+		cfg.DatabaseDSN = envDB
 	}
 	if envNS := os.Getenv("HAVOC_ALLOWED_NAMESPACES"); envNS != "" {
 		parts := strings.Split(envNS, ",")
