@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 	
@@ -15,6 +16,7 @@ type Config struct {
 	TargetNamespaces        []string        `yaml:"target_namespaces"`
 	MaxBlastRadiusPercent   float64         `yaml:"maxBlastRadiusPercent"`
 	AbortOnErrorRatePercent float64         `yaml:"abortOnErrorRatePercent"`
+	Safety                  SafetyConfig    `yaml:"safety"`
 	DatabaseDSN             string          `yaml:"database_dsn"`
 	AnthropicAPIKey         string           `yaml:"anthropic_api_key"`
 	API                     APIConfig        `yaml:"api"`
@@ -23,6 +25,10 @@ type Config struct {
 	Scheduler               SchedulerConfig  `yaml:"scheduler"`
 	Server                  ServerConfig     `yaml:"server"`
 	Topology                TopologyConfig   `yaml:"topology"`
+}
+
+type SafetyConfig struct {
+	AllowedNamespaces []string `yaml:"allowedNamespaces"`
 }
 
 type APIConfig struct {
@@ -115,6 +121,17 @@ func LoadConfig(path string) (*Config, error) {
 			if envToken := os.Getenv("HAVOC_API_TOKEN"); envToken != "" {
 				cfg.API.Token = envToken
 			}
+			if envNS := os.Getenv("HAVOC_ALLOWED_NAMESPACES"); envNS != "" {
+				parts := strings.Split(envNS, ",")
+				var nsList []string
+				for _, p := range parts {
+					trimmed := strings.TrimSpace(p)
+					if trimmed != "" {
+						nsList = append(nsList, trimmed)
+					}
+				}
+				cfg.Safety.AllowedNamespaces = nsList
+			}
 			return cfg, nil
 		}
 		return nil, err
@@ -143,6 +160,17 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if envToken := os.Getenv("HAVOC_API_TOKEN"); envToken != "" {
 		cfg.API.Token = envToken
+	}
+	if envNS := os.Getenv("HAVOC_ALLOWED_NAMESPACES"); envNS != "" {
+		parts := strings.Split(envNS, ",")
+		var nsList []string
+		for _, p := range parts {
+			trimmed := strings.TrimSpace(p)
+			if trimmed != "" {
+				nsList = append(nsList, trimmed)
+			}
+		}
+		cfg.Safety.AllowedNamespaces = nsList
 	}
 
 	if cfg.MaxBlastRadiusPercent <= 0 {

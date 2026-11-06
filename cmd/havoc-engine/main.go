@@ -60,7 +60,7 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL))
+			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL), cfg.Safety.AllowedNamespaces)
 			deletedPod, recoveryTimeMs, err := runner.ExecuteKillPod(context.Background(), ns, selector)
 			
 			// Scoring & Storage logic
@@ -101,7 +101,7 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL))
+			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL), cfg.Safety.AllowedNamespaces)
 			recoveryTimeMs, err := runner.ExecuteInjectLatency(context.Background(), ns, podName, delayMs)
 			
 			// Scoring & Storage logic
@@ -141,7 +141,7 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL))
+			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL), cfg.Safety.AllowedNamespaces)
 			recoveryTimeMs, err := runner.ExecuteSpikeCPU(context.Background(), ns, podName, durationSec)
 			
 			// Scoring & Storage logic
@@ -294,7 +294,7 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
-			runner := safety.NewSafetyRunner(client, maxBlast, abortThreshold, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL))
+			runner := safety.NewSafetyRunner(client, maxBlast, abortThreshold, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL), cfg.Safety.AllowedNamespaces)
 
 			if dryRun {
 				fmt.Printf("[DRY-RUN] Executing experiment %q (%s)\n", exp.Name, exp.Action)

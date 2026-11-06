@@ -10,7 +10,7 @@ func TestLoadConfig_ValidFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yaml")
 
-	content := []byte("kubeconfig: /custom/kube/config\ndefault_namespace: test-ns\n")
+	content := []byte("kubeconfig: /custom/kube/config\ndefault_namespace: test-ns\nsafety:\n  allowedNamespaces:\n    - demo\n    - staging\n")
 	if err := os.WriteFile(configFile, content, 0644); err != nil {
 		t.Fatalf("failed to write test config file: %v", err)
 	}
@@ -25,6 +25,9 @@ func TestLoadConfig_ValidFile(t *testing.T) {
 	}
 	if cfg.DefaultNamespace != "test-ns" {
 		t.Errorf("expected DefaultNamespace 'test-ns', got '%s'", cfg.DefaultNamespace)
+	}
+	if len(cfg.Safety.AllowedNamespaces) != 2 || cfg.Safety.AllowedNamespaces[0] != "demo" || cfg.Safety.AllowedNamespaces[1] != "staging" {
+		t.Errorf("expected allowed namespaces [demo, staging], got %v", cfg.Safety.AllowedNamespaces)
 	}
 }
 
@@ -54,10 +57,12 @@ func TestLoadConfig_PrometheusAndEnvOverrides(t *testing.T) {
 	os.Setenv("PROMETHEUS_URL", "http://prometheus:9090")
 	os.Setenv("HAVOC_API_TOKEN", "test-secret-token")
 	os.Setenv("HAVOC_BIND_ADDRESS", "0.0.0.0")
+	os.Setenv("HAVOC_ALLOWED_NAMESPACES", "demo,staging,test-ns")
 	defer func() {
 		os.Unsetenv("PROMETHEUS_URL")
 		os.Unsetenv("HAVOC_API_TOKEN")
 		os.Unsetenv("HAVOC_BIND_ADDRESS")
+		os.Unsetenv("HAVOC_ALLOWED_NAMESPACES")
 	}()
 
 	cfg, err := LoadConfig("non_existent_file.yaml")
@@ -73,5 +78,8 @@ func TestLoadConfig_PrometheusAndEnvOverrides(t *testing.T) {
 	}
 	if cfg.Server.Host != "0.0.0.0" {
 		t.Errorf("expected Host override '0.0.0.0', got '%s'", cfg.Server.Host)
+	}
+	if len(cfg.Safety.AllowedNamespaces) != 3 || cfg.Safety.AllowedNamespaces[0] != "demo" || cfg.Safety.AllowedNamespaces[1] != "staging" || cfg.Safety.AllowedNamespaces[2] != "test-ns" {
+		t.Errorf("expected allowed namespaces [demo, staging, test-ns], got %v", cfg.Safety.AllowedNamespaces)
 	}
 }

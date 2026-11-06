@@ -17,6 +17,7 @@ import (
 
 	"havoc-engine/internal/config"
 	"havoc-engine/internal/events"
+	"havoc-engine/internal/metrics"
 	"havoc-engine/internal/postmortem"
 	"havoc-engine/internal/safety"
 	"havoc-engine/internal/scoring"
@@ -324,6 +325,34 @@ func (s *Server) handlePostExperiments(w http.ResponseWriter, r *http.Request) {
 		req.Namespace = s.cfg.DefaultNamespace
 	}
 
+	if err := safety.CheckNamespaceAllowed(req.Namespace, s.cfg.Safety.AllowedNamespaces); err != nil {
+		actionType := req.Action
+		if actionType == "kill-pod" {
+			actionType = "kill_pod"
+		} else if actionType == "inject-latency" {
+			actionType = "inject_latency"
+		} else if actionType == "spike-cpu" {
+			actionType = "spike_cpu"
+		}
+		metrics.ExperimentsTotal.WithLabelValues(actionType, "blocked").Inc()
+		blockedExpID := uuid.New()
+		if s.hub != nil {
+			s.hub.Publish(events.Event{
+				ExperimentID: blockedExpID.String(),
+				Type:         events.EventBlocked,
+				Level:        "error",
+				Message:      fmt.Sprintf("[%s] blocked: %v", blockedExpID, err),
+				Service:      req.Selector,
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
+
 	// Auto-discover target if none provided (e.g. from UI buttons)
 	if req.Selector == "" && req.Pod == "" && s.k8sClient != nil {
 		if deps, err := s.k8sClient.AppsV1().Deployments(req.Namespace).List(r.Context(), metav1.ListOptions{}); err == nil && len(deps.Items) > 0 {
@@ -403,7 +432,7 @@ func (s *Server) runExperiment(expID uuid.UUID, req ExperimentRequest, targetKey
 		})
 	}
 
-	runner := safety.NewSafetyRunner(s.k8sClient, s.cfg.MaxBlastRadiusPercent, s.cfg.AbortOnErrorRatePercent, false, s.metricsChecker)
+	runner := safety.NewSafetyRunner(s.k8sClient, s.cfg.MaxBlastRadiusPercent, s.cfg.AbortOnErrorRatePercent, false, s.metricsChecker, s.cfg.Safety.AllowedNamespaces)
 	if s.hub != nil {
 		runner.SetPublisher(s.hub)
 	}

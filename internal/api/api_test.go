@@ -556,3 +556,71 @@ func TestAPI_DuplicateConcurrentExperiment(t *testing.T) {
 		t.Errorf("expected conflict message about active experiment, got: %v", errResp)
 	}
 }
+
+func TestAPI_NamespaceAllowlist_Blocked(t *testing.T) {
+	cfg := &config.Config{
+		DefaultNamespace: "demo",
+		Safety: config.SafetyConfig{
+			AllowedNamespaces: []string{"demo"},
+		},
+		Server: config.ServerConfig{
+			Port: 8080,
+		},
+	}
+
+	hub := events.NewHub()
+	defer hub.Close()
+
+	srv := NewServer(cfg, nil, nil, hub, nil)
+
+	body := []byte(`{"action":"kill-pod","namespace":"production","selector":"app=prod-service"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/experiments", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403 Forbidden, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var errResp map[string]string
+	_ = json.NewDecoder(w.Body).Decode(&errResp)
+	if !strings.Contains(errResp["error"], "not in the allowed namespaces list") {
+		t.Errorf("expected allowed namespace error, got: %v", errResp)
+	}
+}
+
+func TestAPI_KubeSystem_Blocked(t *testing.T) {
+	cfg := &config.Config{
+		DefaultNamespace: "demo",
+		Safety: config.SafetyConfig{
+			AllowedNamespaces: []string{"demo", "kube-system"},
+		},
+		Server: config.ServerConfig{
+			Port: 8080,
+		},
+	}
+
+	hub := events.NewHub()
+	defer hub.Close()
+
+	srv := NewServer(cfg, nil, nil, hub, nil)
+
+	body := []byte(`{"action":"kill-pod","namespace":"kube-system","selector":"app=kube-dns"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/experiments", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403 Forbidden, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var errResp map[string]string
+	_ = json.NewDecoder(w.Body).Decode(&errResp)
+	if !strings.Contains(errResp["error"], "system namespace and is blocked by the hard-coded denylist") {
+		t.Errorf("expected system namespace denylist error, got: %v", errResp)
+	}
+}

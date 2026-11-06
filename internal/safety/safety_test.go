@@ -7,9 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"havoc-engine/internal/events"
+	"havoc-engine/internal/metrics"
 )
 
 func TestSafety_BlastRadiusExceeded(t *testing.T) {
@@ -181,5 +185,228 @@ func TestSafety_DryRunMode(t *testing.T) {
 	pod, _ := fakeClient.CoreV1().Pods("default").Get(ctx, "demo-pod-1", metav1.GetOptions{})
 	if len(pod.Spec.EphemeralContainers) != 0 {
 		t.Errorf("expected 0 ephemeral containers in dry-run mode, got %d", len(pod.Spec.EphemeralContainers))
+	}
+}
+
+type testEventPublisher struct {
+	events []events.Event
+}
+
+func (p *testEventPublisher) Publish(event events.Event) {
+	p.events = append(p.events, event)
+}
+
+func TestSafety_CheckNamespaceAllowed_Unit(t *testing.T) {
+	tests := []struct {
+		name        string
+		namespace   string
+		allowed     []string
+		expectError bool
+		errMsgPart  string
+	}{
+		{
+			name:        "empty namespace returns error",
+			namespace:   "",
+			allowed:     []string{"demo"},
+			expectError: true,
+			errMsgPart:  "namespace cannot be empty",
+		},
+		{
+			name:        "allowed namespace passes",
+			namespace:   "demo",
+			allowed:     []string{"demo"},
+			expectError: false,
+		},
+		{
+			name:        "disallowed namespace is blocked",
+			namespace:   "production",
+			allowed:     []string{"demo"},
+			expectError: true,
+			errMsgPart:  "not in the allowed namespaces list",
+		},
+		{
+			name:        "kube-system blocked with empty allowlist",
+			namespace:   "kube-system",
+			allowed:     nil,
+			expectError: true,
+			errMsgPart:  "system namespace and is blocked by the hard-coded denylist",
+		},
+		{
+			name:        "kube-system blocked even if explicitly listed in allowlist",
+			namespace:   "kube-system",
+			allowed:     []string{"demo", "kube-system"},
+			expectError: true,
+			errMsgPart:  "system namespace and is blocked by the hard-coded denylist",
+		},
+		{
+			name:        "kube-public blocked even if listed",
+			namespace:   "kube-public",
+			allowed:     []string{"kube-public"},
+			expectError: true,
+			errMsgPart:  "system namespace and is blocked by the hard-coded denylist",
+		},
+		{
+			name:        "kube-node-lease blocked even if listed",
+			namespace:   "kube-node-lease",
+			allowed:     []string{"kube-node-lease"},
+			expectError: true,
+			errMsgPart:  "system namespace and is blocked by the hard-coded denylist",
+		},
+		{
+			name:        "case-insensitive match for allowed namespace",
+			namespace:   "DEMO",
+			allowed:     []string{"demo"},
+			expectError: false,
+		},
+		{
+			name:        "case-insensitive match for kube-system denylist",
+			namespace:   "Kube-System",
+			allowed:     []string{"kube-system"},
+			expectError: true,
+			errMsgPart:  "system namespace and is blocked by the hard-coded denylist",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CheckNamespaceAllowed(tt.namespace, tt.allowed)
+			if tt.expectError {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tt.errMsgPart) {
+					t.Errorf("expected error containing %q, got %q", tt.errMsgPart, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestSafety_NamespaceAllowlist_AllowedPasses(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset(
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: "demo", Labels: map[string]string{"app": "demo"}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-2", Namespace: "demo", Labels: map[string]string{"app": "demo"}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-3", Namespace: "demo", Labels: map[string]string{"app": "demo"}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-4", Namespace: "demo", Labels: map[string]string{"app": "demo"}}},
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	runner := NewSafetyRunner(fakeClient, 30.0, 5.0, false, nil, []string{"demo"})
+
+	deletedPod, _, err := runner.ExecuteKillPod(ctx, "demo", "app=demo")
+	if err != nil {
+		t.Fatalf("expected allowed namespace experiment to pass, got: %v", err)
+	}
+	if deletedPod == "" {
+		t.Errorf("expected a pod to have been deleted")
+	}
+}
+
+func TestSafety_NamespaceAllowlist_DisallowedBlocked(t *testing.T) {
+	metrics.ExperimentsTotal.Reset()
+
+	fakeClient := fake.NewSimpleClientset(
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: "production", Labels: map[string]string{"app": "prod-app"}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-2", Namespace: "production", Labels: map[string]string{"app": "prod-app"}}},
+	)
+
+	pub := &testEventPublisher{}
+	runner := NewSafetyRunner(fakeClient, 30.0, 5.0, false, nil, []string{"demo"})
+	runner.SetPublisher(pub)
+
+	ctx := context.Background()
+	_, _, err := runner.ExecuteKillPod(ctx, "production", "app=prod-app")
+	if err == nil {
+		t.Fatalf("expected experiment in disallowed namespace to be blocked, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "not in the allowed namespaces list") {
+		t.Errorf("expected error to mention allowed namespaces list, got: %v", err)
+	}
+
+	// Verify metric incremented for blocked
+	count := testutil.ToFloat64(metrics.ExperimentsTotal.WithLabelValues("kill_pod", "blocked"))
+	if count != 1 {
+		t.Errorf("expected 1 blocked metric count, got %v", count)
+	}
+
+	// Verify blocked event was emitted
+	if len(pub.events) == 0 {
+		t.Fatalf("expected at least one event published")
+	}
+	blockedFound := false
+	for _, ev := range pub.events {
+		if ev.Type == events.EventBlocked {
+			blockedFound = true
+			break
+		}
+	}
+	if !blockedFound {
+		t.Errorf("expected EventBlocked to be published, but got events: %+v", pub.events)
+	}
+
+	// Verify cluster was untouched
+	pods, listErr := fakeClient.CoreV1().Pods("production").List(ctx, metav1.ListOptions{})
+	if listErr != nil {
+		t.Fatalf("failed to list pods: %v", listErr)
+	}
+	if len(pods.Items) != 2 {
+		t.Errorf("expected pods in cluster to remain untouched (2 pods), got %d", len(pods.Items))
+	}
+}
+
+func TestSafety_NamespaceAllowlist_KubeSystemBlockedEvenIfListed(t *testing.T) {
+	metrics.ExperimentsTotal.Reset()
+
+	fakeClient := fake.NewSimpleClientset(
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "kube-dns", Namespace: "kube-system", Labels: map[string]string{"app": "kube-dns"}}},
+	)
+
+	pub := &testEventPublisher{}
+	// Even if an administrator mistakenly lists kube-system in allowed namespaces:
+	runner := NewSafetyRunner(fakeClient, 30.0, 5.0, false, nil, []string{"demo", "kube-system"})
+	runner.SetPublisher(pub)
+
+	ctx := context.Background()
+	_, _, err := runner.ExecuteKillPod(ctx, "kube-system", "app=kube-dns")
+	if err == nil {
+		t.Fatalf("expected kube-system experiment to be blocked even if listed, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "system namespace and is blocked by the hard-coded denylist") {
+		t.Errorf("expected error to state system namespace denylist, got: %v", err)
+	}
+
+	// Verify metric incremented for blocked
+	count := testutil.ToFloat64(metrics.ExperimentsTotal.WithLabelValues("kill_pod", "blocked"))
+	if count != 1 {
+		t.Errorf("expected 1 blocked metric count, got %v", count)
+	}
+
+	// Verify blocked event emitted
+	blockedFound := false
+	for _, ev := range pub.events {
+		if ev.Type == events.EventBlocked {
+			blockedFound = true
+			break
+		}
+	}
+	if !blockedFound {
+		t.Errorf("expected EventBlocked to be published, but got events: %+v", pub.events)
+	}
+
+	// Verify cluster was untouched
+	pods, listErr := fakeClient.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{})
+	if listErr != nil {
+		t.Fatalf("failed to list pods: %v", listErr)
+	}
+	if len(pods.Items) != 1 {
+		t.Errorf("expected kube-system pods in cluster to remain untouched (1 pod), got %d", len(pods.Items))
 	}
 }

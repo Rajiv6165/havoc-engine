@@ -1,7 +1,10 @@
 kubeconfig: "~/.kube/config"
-default_namespace: "default"
+default_namespace: "demo"
 maxBlastRadiusPercent: 30
 abortOnErrorRatePercent: 5.0
+safety:
+  allowedNamespaces:
+    - "demo"
 database_dsn: "postgres://postgres:postgres@localhost:5432/havoc?sslmode=disable"
 prometheus:
   url: "http://localhost:9092"

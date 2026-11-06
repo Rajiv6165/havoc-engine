@@ -183,7 +183,7 @@ func (s *Scheduler) runExperiment(ctx context.Context, file string) error {
 		return err
 	}
 
-	runner := safety.NewSafetyRunner(client, maxBlast, abortThreshold, false, s.metricsChecker)
+	runner := safety.NewSafetyRunner(client, maxBlast, abortThreshold, false, s.metricsChecker, s.cfg.Safety.AllowedNamespaces)
 
 	var expErr error
 	switch exp.Action {

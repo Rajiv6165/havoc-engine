@@ -80,9 +80,47 @@ func (f MetricsCheckFunc) GetErrorRate(ctx context.Context, namespace string) (f
 	return f(ctx, namespace)
 }
 
+// SystemNamespaces defines standard Kubernetes namespaces that are never allowed for chaos injection (hard-coded denylist).
+var SystemNamespaces = map[string]bool{
+	"kube-system":     true,
+	"kube-public":     true,
+	"kube-node-lease": true,
+}
+
+// CheckNamespaceAllowed verifies that the given namespace is not a system namespace
+// and is included in allowedNamespaces (if allowedNamespaces is non-empty).
+func CheckNamespaceAllowed(namespace string, allowedNamespaces []string) error {
+	ns := strings.TrimSpace(namespace)
+	if ns == "" {
+		return fmt.Errorf("namespace cannot be empty")
+	}
+
+	// 1. Hard-coded system denylist check
+	if SystemNamespaces[strings.ToLower(ns)] {
+		return fmt.Errorf("namespace %q is a system namespace and is blocked by the hard-coded denylist", ns)
+	}
+
+	// 2. Allowlist check if configured
+	if len(allowedNamespaces) > 0 {
+		allowed := false
+		for _, a := range allowedNamespaces {
+			if strings.EqualFold(strings.TrimSpace(a), ns) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("namespace %q is not in the allowed namespaces list: %v", ns, allowedNamespaces)
+		}
+	}
+
+	return nil
+}
+
 // SafetyRunner wraps chaos experiment execution with blast radius limits, auto-abort error checks, and dry-run mode.
 type SafetyRunner struct {
 	client                  kubernetes.Interface
+	allowedNamespaces       []string
 	maxBlastRadiusPercent   float64
 	abortOnErrorRatePercent float64
 	dryRun                  bool
@@ -91,20 +129,30 @@ type SafetyRunner struct {
 }
 
 // NewSafetyRunner initializes a new SafetyRunner.
-func NewSafetyRunner(client kubernetes.Interface, maxBlastRadius, abortThreshold float64, dryRun bool, checker MetricsChecker) *SafetyRunner {
+func NewSafetyRunner(client kubernetes.Interface, maxBlastRadius, abortThreshold float64, dryRun bool, checker MetricsChecker, allowedNamespaces ...[]string) *SafetyRunner {
 	if maxBlastRadius <= 0 {
 		maxBlastRadius = 30.0
 	}
 	if abortThreshold <= 0 {
 		abortThreshold = 5.0
 	}
+	var allowed []string
+	if len(allowedNamespaces) > 0 {
+		allowed = allowedNamespaces[0]
+	}
 	return &SafetyRunner{
 		client:                  client,
+		allowedNamespaces:       allowed,
 		maxBlastRadiusPercent:   maxBlastRadius,
 		abortOnErrorRatePercent: abortThreshold,
 		dryRun:                  dryRun,
 		metricsChecker:          checker,
 	}
+}
+
+// SetAllowedNamespaces configures the allowed namespaces for this SafetyRunner.
+func (r *SafetyRunner) SetAllowedNamespaces(allowed []string) {
+	r.allowedNamespaces = allowed
 }
 
 // SetPublisher assigns an event publisher to emit lifecycle events.
@@ -218,6 +266,11 @@ func CheckAutoAbort(ctx context.Context, checker MetricsChecker, namespace strin
 // ExecuteKillPod wraps experiments.KillPod with safety checks and dry-run logic.
 func (r *SafetyRunner) ExecuteKillPod(ctx context.Context, namespace, labelSelector string) (string, *int, error) {
 	expID, service := getExpIDAndService(ctx, extractServiceName(labelSelector, ""))
+	if err := CheckNamespaceAllowed(namespace, r.allowedNamespaces); err != nil {
+		metrics.ExperimentsTotal.WithLabelValues("kill_pod", "blocked").Inc()
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventBlocked, Level: "error", Message: fmt.Sprintf("[%s] blocked: %v", expID, err), Service: service})
+		return "", nil, err
+	}
 	if r.dryRun {
 		fmt.Printf("[DRY-RUN] Would kill 1 pod matching selector %q in namespace %q\n", labelSelector, namespace)
 		r.publish(events.Event{ExperimentID: expID, Type: events.EventTargetSelected, Level: "warn", Message: fmt.Sprintf("[%s] target_selected: targeting simulated pod in %s", expID, service), Service: service})
@@ -275,6 +328,11 @@ func (r *SafetyRunner) ExecuteKillPod(ctx context.Context, namespace, labelSelec
 // ExecuteInjectLatency wraps experiments.InjectLatency with safety checks, auto-abort, rollback logic, and recovery tracking.
 func (r *SafetyRunner) ExecuteInjectLatency(ctx context.Context, namespace, podName string, delayMs int) (*int, error) {
 	expID, service := getExpIDAndService(ctx, extractServiceName("", podName))
+	if err := CheckNamespaceAllowed(namespace, r.allowedNamespaces); err != nil {
+		metrics.ExperimentsTotal.WithLabelValues("inject_latency", "blocked").Inc()
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventBlocked, Level: "error", Message: fmt.Sprintf("[%s] blocked: %v", expID, err), Service: service})
+		return nil, err
+	}
 	if r.dryRun {
 		fmt.Printf("[DRY-RUN] Would inject %dms latency into pod %q in namespace %q\n", delayMs, podName, namespace)
 		r.publish(events.Event{ExperimentID: expID, Type: events.EventTargetSelected, Level: "warn", Message: fmt.Sprintf("[%s] target_selected: targeting pod %q in service %q", expID, podName, service), Service: service})
@@ -325,6 +383,11 @@ func (r *SafetyRunner) ExecuteInjectLatency(ctx context.Context, namespace, podN
 // ExecuteSpikeCPU wraps experiments.SpikeCPU with safety checks, auto-abort, rollback logic, and recovery tracking.
 func (r *SafetyRunner) ExecuteSpikeCPU(ctx context.Context, namespace, podName string, durationSec int) (*int, error) {
 	expID, service := getExpIDAndService(ctx, extractServiceName("", podName))
+	if err := CheckNamespaceAllowed(namespace, r.allowedNamespaces); err != nil {
+		metrics.ExperimentsTotal.WithLabelValues("spike_cpu", "blocked").Inc()
+		r.publish(events.Event{ExperimentID: expID, Type: events.EventBlocked, Level: "error", Message: fmt.Sprintf("[%s] blocked: %v", expID, err), Service: service})
+		return nil, err
+	}
 	if r.dryRun {
 		fmt.Printf("[DRY-RUN] Would spike CPU (%ds) in pod %q in namespace %q\n", durationSec, podName, namespace)
 		r.publish(events.Event{ExperimentID: expID, Type: events.EventTargetSelected, Level: "warn", Message: fmt.Sprintf("[%s] target_selected: targeting pod %q in service %q", expID, podName, service), Service: service})
