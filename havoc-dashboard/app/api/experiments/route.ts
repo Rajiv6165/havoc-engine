@@ -39,6 +39,16 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (
+    process.env.DEMO_READ_ONLY === 'true' ||
+    process.env.NEXT_PUBLIC_DEMO_READ_ONLY === 'true'
+  ) {
+    return NextResponse.json(
+      { error: 'Dashboard is in read-only demo mode. Run locally to inject real chaos.' },
+      { status: 403 }
+    );
+  }
+
   const engineUrl = process.env.HAVOC_API_URL || process.env.NEXT_PUBLIC_ENGINE_API || 'http://localhost:8080';
 
   try {

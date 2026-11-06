@@ -10,6 +10,12 @@ export default function Home() {
   const [services, setServices] = useState<ServiceStatus[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
+  const [isReadOnly, setIsReadOnly] = useState<boolean>(() => {
+    return (
+      process.env.NEXT_PUBLIC_DEMO_READ_ONLY === 'true' ||
+      process.env.DEMO_READ_ONLY === 'true'
+    );
+  });
 
   const fetchStatus = useCallback(() => {
     setIsLoading(true);
@@ -37,6 +43,20 @@ export default function Home() {
         setServices([]);
         setIsLoading(false);
       });
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/config')
+      .then((res) => {
+        if (res.ok) return res.json();
+        return null;
+      })
+      .then((data) => {
+        if (data && typeof data.readOnly === 'boolean') {
+          setIsReadOnly(data.readOnly);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -72,6 +92,22 @@ export default function Home() {
                 {isOffline ? 'Offline' : 'Online'}
               </span>
             </div>
+            {isReadOnly && (
+              <div
+                className="px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-xs font-medium text-amber-400 flex items-center gap-1.5 shadow-sm"
+                title="Run locally to inject real chaos"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                  />
+                </svg>
+                Read-Only Demo
+              </div>
+            )}
             <div className="px-3 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-xs font-medium text-zinc-400">
               Environment: <span className="text-zinc-200">Kubernetes</span>
             </div>
@@ -177,11 +213,50 @@ export default function Home() {
                 Chaos Controls
               </h2>
               <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 backdrop-blur-sm">
+                {isReadOnly && (
+                  <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2.5">
+                    <svg className="w-4 h-4 shrink-0 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                      />
+                    </svg>
+                    <span>
+                      <strong>Read-Only Demo Mode:</strong> Live chaos injection is disabled in this public demonstration. Run locally to inject real chaos.
+                    </span>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-3">
-                  <ExperimentButton label="Kill Pod" action="kill-pod" variant="danger" />
-                  <ExperimentButton label="Inject Latency" action="inject-latency" variant="warning" />
-                  <ExperimentButton label="Spike CPU" action="spike-cpu" variant="warning" />
-                  <ExperimentButton label="Memory Leak" action="memory-leak" variant="warning" />
+                  <ExperimentButton
+                    label="Kill Pod"
+                    action="kill-pod"
+                    variant="danger"
+                    disabled={isReadOnly}
+                    tooltip="Run locally to inject real chaos"
+                  />
+                  <ExperimentButton
+                    label="Inject Latency"
+                    action="inject-latency"
+                    variant="warning"
+                    disabled={isReadOnly}
+                    tooltip="Run locally to inject real chaos"
+                  />
+                  <ExperimentButton
+                    label="Spike CPU"
+                    action="spike-cpu"
+                    variant="warning"
+                    disabled={isReadOnly}
+                    tooltip="Run locally to inject real chaos"
+                  />
+                  <ExperimentButton
+                    label="Memory Leak"
+                    action="memory-leak"
+                    variant="warning"
+                    disabled={isReadOnly}
+                    tooltip="Run locally to inject real chaos"
+                  />
                 </div>
                 <div className="mt-5 pt-5 border-t border-zinc-800/80">
                   <p className="text-xs text-zinc-400 font-medium flex items-start gap-2">

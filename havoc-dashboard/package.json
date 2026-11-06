@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "node tests/read_only_test.mjs"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.5",
