@@ -1,0 +1,38 @@
+# Caddyfile - Reverse proxy with automatic HTTPS for Havoc Engine
+
+{
+	# Optional admin email for Let's Encrypt renewal notifications
+	# email your-email@example.com
+}
+
+{$DOMAIN:localhost} {
+	# Proxy WebSocket connections to Havoc Engine event stream
+	@websockets {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @websockets havoc-engine:9091
+
+	# WebSocket path prefix proxy
+	reverse_proxy /ws* havoc-engine:9091
+
+	# Route all web traffic to Next.js Dashboard
+	# Note: Havoc Engine API (:8080), PostgreSQL (:5432), and Prometheus (:9090)
+	# are NOT exposed to the public internet; dashboard server-side handlers proxy API calls internally.
+	reverse_proxy havoc-dashboard:3000
+
+	# Performance & compression
+	encode gzip zstd
+
+	# Security headers
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

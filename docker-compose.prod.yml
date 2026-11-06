@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - havoc-dashboard
+
+  havoc-dashboard:
+    build:
+      context: ./havoc-dashboard
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      HAVOC_API_URL: "http://havoc-engine:8080"
+      HAVOC_API_TOKEN: ${HAVOC_API_TOKEN:-}
+      DEMO_READ_ONLY: ${DEMO_READ_ONLY:-true}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
+    depends_on:
+      - havoc-engine
+
+  havoc-engine:
+    build: .
+    restart: unless-stopped
+    expose:
+      - "8080"
+      - "9091"
+      - "9090"
+    command: ["serve"]
+    environment:
+      DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/havoc?sslmode=disable"
+      PROMETHEUS_URL: "http://prometheus:9090"
+      HAVOC_BIND_ADDRESS: "0.0.0.0"
+      HAVOC_API_TOKEN: ${HAVOC_API_TOKEN:-}
+      HAVOC_ALLOWED_NAMESPACES: ${HAVOC_ALLOWED_NAMESPACES:-demo}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      KUBECONFIG: "/etc/rancher/k3s/k3s.yaml"
+    volumes:
+      # Mount k3s kubeconfig from host if running alongside k3s on EC2
+      - /etc/rancher/k3s/k3s.yaml:/etc/rancher/k3s/k3s.yaml:ro
+    depends_on:
+      - postgres
+
+  havoc-cron:
+    build: .
+    restart: unless-stopped
+    command: ["cron", "start"]
+    environment:
+      DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/havoc?sslmode=disable"
+      PROMETHEUS_URL: "http://prometheus:9090"
+      HAVOC_ALLOWED_NAMESPACES: ${HAVOC_ALLOWED_NAMESPACES:-demo}
+      KUBECONFIG: "/etc/rancher/k3s/k3s.yaml"
+    volumes:
+      - /etc/rancher/k3s/k3s.yaml:/etc/rancher/k3s/k3s.yaml:ro
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: havoc
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    expose:
+      - "9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - havoc-engine
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
