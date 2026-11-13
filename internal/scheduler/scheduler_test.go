@@ -73,7 +73,10 @@ func TestScheduler_AllowedWindows(t *testing.T) {
 
 func TestScheduler_Tick(t *testing.T) {
 	// 1. Setup a test database
-	dsn := "postgres://postgres:postgres@localhost:5432/havoc?sslmode=disable"
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://postgres:postgres@localhost:5432/havoc?sslmode=disable"
+	}
 	repo, err := storage.NewPostgresRepository(dsn)
 	if err != nil {
 		t.Skipf("Skipping integration test because DB is not available: %v", err)
@@ -82,7 +85,7 @@ func TestScheduler_Tick(t *testing.T) {
 
 	ctx := context.Background()
 	if err := repo.RunMigrations(ctx); err != nil {
-		t.Logf("Database migrations skipped in test environment: %v", err)
+		t.Fatalf("Database migrations failed: %v", err)
 	}
 	
 	// Ensure not paused
