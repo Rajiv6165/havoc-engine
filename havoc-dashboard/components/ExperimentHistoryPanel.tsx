@@ -12,6 +12,7 @@ export interface ExperimentRecord {
   ResilienceScore: number;
   PostmortemReport: string | null;
   CreatedAt: string;
+  Seeded?: boolean;
 }
 
 export default function ExperimentHistoryPanel() {
@@ -122,6 +123,11 @@ export default function ExperimentHistoryPanel() {
                       <span className="px-2 py-0.5 rounded text-xs font-mono font-medium bg-zinc-800 text-zinc-200 border border-zinc-700">
                         {exp.ExperimentType}
                       </span>
+                      {exp.Seeded && (
+                        <span className="px-2 py-0.5 rounded text-[11px] font-sans font-medium bg-sky-500/10 text-sky-400 border border-sky-500/30">
+                          sample data
+                        </span>
+                      )}
                       <span className="text-xs text-zinc-400 font-mono">
                         ns: <span className="text-zinc-300">{exp.TargetNamespace || 'default'}</span>
                       </span>

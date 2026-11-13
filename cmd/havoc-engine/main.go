@@ -699,6 +699,7 @@ Excessive CPU contention throttled database query processing threads. The safety
 					ResilienceScore:  92,
 					PostmortemReport: &pmReport1,
 					CreatedAt:        now.Add(-25 * time.Minute),
+					Seeded:           true,
 				}
 
 				rec2 := 4100
@@ -713,6 +714,7 @@ Excessive CPU contention throttled database query processing threads. The safety
 					ResilienceScore:  84,
 					PostmortemReport: &pmReport2,
 					CreatedAt:        now.Add(-15 * time.Minute),
+					Seeded:           true,
 				}
 
 				rec3 := 6200
@@ -727,6 +729,7 @@ Excessive CPU contention throttled database query processing threads. The safety
 					ResilienceScore:  68,
 					PostmortemReport: &pmReport3,
 					CreatedAt:        now.Add(-5 * time.Minute),
+					Seeded:           true,
 				}
 
 				_ = repo.SaveExperimentResult(context.Background(), r1)

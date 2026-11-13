@@ -108,7 +108,7 @@ The script automatically:
 3. Creates the `demo` namespace and deploys sample microservices (`frontend`, `api`, `db`, `queue`).
 4. Launches the full stack with `docker compose up --build -d`.
 5. Waits for the API to become ready.
-6. Runs `havoc-engine seed-demo` so your history panel, score trend, and postmortems are ready on first open.
+6. Runs `havoc-engine seed-demo` so your history panel, score trend, and postmortems are ready on first open. Seeded baseline records are marked with a `sample data` badge in the dashboard's Experiment History table to clearly differentiate them from live chaos runs.
 7. Prints your dashboard URL ([http://localhost:3000](http://localhost:3000)) and suggested clicks!
 
 ---
@@ -178,7 +178,7 @@ Havoc Engine incorporates defensive safeguards to protect cluster stability and 
 
 ### Server & Control Plane
 - `havoc-engine serve`: Starts the Havoc Engine control plane (HTTP API on :8080, WebSocket stream on :9091, metrics on :9090).
-- `havoc-engine seed-demo`: Populates the database with realistic baseline experiments, scores, and AI postmortems, and tests live cluster connectivity.
+- `havoc-engine seed-demo`: Populates the database with realistic baseline experiments, scores, and AI postmortems (persisted with a `seeded` flag and displayed with a `sample data` badge in the dashboard history), and tests live cluster connectivity.
 
 ### Chaos Actions
 - `havoc-engine kill-pod --namespace <ns> --selector <label>`: Deletes a random pod matching the label selector.
