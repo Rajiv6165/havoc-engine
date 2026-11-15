@@ -5,6 +5,7 @@ import ExperimentButton from '@/components/ExperimentButton';
 import LiveLogPanel from '@/components/LiveLogPanel';
 import BlastRadiusGraph from '@/components/BlastRadiusGraph';
 import ExperimentHistoryPanel from '@/components/ExperimentHistoryPanel';
+import CompareRunsPanel from '@/components/CompareRunsPanel';
 
 export default function Home() {
   const [services, setServices] = useState<ServiceStatus[]>([]);
@@ -297,6 +298,10 @@ export default function Home() {
 
             <section>
               <ExperimentHistoryPanel />
+            </section>
+
+            <section>
+              <CompareRunsPanel />
             </section>
           </div>
 
