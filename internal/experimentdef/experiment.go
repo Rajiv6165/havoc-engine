@@ -11,6 +11,7 @@ import (
 type Experiment struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
+	Label       string `yaml:"label,omitempty"`
 	Target      Target `yaml:"target"`
 	Action      string `yaml:"action"`
 	Params      Params `yaml:"params,omitempty"`
@@ -63,6 +64,9 @@ func LoadExperiment(path string) (*Experiment, error) {
 func (e *Experiment) Validate() error {
 	if e.Name == "" {
 		return fmt.Errorf("missing required field: name")
+	}
+	if len(e.Label) > 40 {
+		return fmt.Errorf("label exceeds maximum length of 40 characters")
 	}
 	if e.Target.Namespace == "" {
 		return fmt.Errorf("missing required field: target.namespace")

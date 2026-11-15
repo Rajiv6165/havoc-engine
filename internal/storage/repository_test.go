@@ -116,6 +116,7 @@ func TestSaveAndFetchExperimentResults(t *testing.T) {
 	recTime1 := 2500
 	errRate1 := 1.25
 	report1 := "Sample postmortem report for live run"
+	label1 := "baseline"
 	liveExp := &ExperimentResult{
 		ID:               uuid.New(),
 		ExperimentType:   "kill-pod",
@@ -127,6 +128,7 @@ func TestSaveAndFetchExperimentResults(t *testing.T) {
 		PostmortemReport: &report1,
 		CreatedAt:        now.Add(-2 * time.Minute),
 		Seeded:           false,
+		Label:            &label1,
 	}
 
 	recTime2 := 4500
@@ -187,9 +189,15 @@ func TestSaveAndFetchExperimentResults(t *testing.T) {
 	if foundLive.PostmortemReport == nil || *foundLive.PostmortemReport != report1 {
 		t.Errorf("postmortem report mismatch: %v", foundLive.PostmortemReport)
 	}
+	if foundLive.Label == nil || *foundLive.Label != label1 {
+		t.Errorf("expected liveExp.Label to be %q, got %v", label1, foundLive.Label)
+	}
 
 	if foundSeeded == nil {
 		t.Fatalf("seeded experiment with ID %s not found in recent experiments", seededExp.ID)
+	}
+	if foundSeeded.Label != nil {
+		t.Errorf("expected seededExp.Label to be nil, got %v", *foundSeeded.Label)
 	}
 	if foundSeeded.Seeded != true {
 		t.Errorf("expected seededExp.Seeded to be true, got %v", foundSeeded.Seeded)

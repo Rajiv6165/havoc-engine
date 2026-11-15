@@ -29,6 +29,7 @@ type ExperimentResult struct {
 	PostmortemReport *string
 	CreatedAt        time.Time
 	Seeded           bool
+	Label            *string
 }
 
 // ScheduledRun represents an execution attempt by the scheduler.
@@ -74,9 +75,9 @@ func (r *PostgresRepository) SaveExperimentResult(ctx context.Context, result *E
 	query := `
 		INSERT INTO experiments (
 			id, experiment_type, target_namespace, recovery_time_ms, 
-			error_rate_percent, safety_intervened, resilience_score, postmortem_report, created_at, seeded
+			error_rate_percent, safety_intervened, resilience_score, postmortem_report, created_at, seeded, label
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 		)
 	`
 	_, err := r.db.ExecContext(ctx, query,
@@ -90,6 +91,7 @@ func (r *PostgresRepository) SaveExperimentResult(ctx context.Context, result *E
 		result.PostmortemReport,
 		result.CreatedAt,
 		result.Seeded,
+		result.Label,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert experiment result: %w", err)
@@ -101,7 +103,7 @@ func (r *PostgresRepository) SaveExperimentResult(ctx context.Context, result *E
 func (r *PostgresRepository) GetRecentExperiments(ctx context.Context, limit int) ([]ExperimentResult, error) {
 	query := `
 		SELECT id, experiment_type, target_namespace, recovery_time_ms, 
-		       error_rate_percent, safety_intervened, resilience_score, postmortem_report, created_at, seeded
+		       error_rate_percent, safety_intervened, resilience_score, postmortem_report, created_at, seeded, label
 		FROM experiments
 		ORDER BY created_at DESC
 		LIMIT $1
@@ -126,6 +128,7 @@ func (r *PostgresRepository) GetRecentExperiments(ctx context.Context, limit int
 			&res.PostmortemReport,
 			&res.CreatedAt,
 			&res.Seeded,
+			&res.Label,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan experiment result: %w", err)

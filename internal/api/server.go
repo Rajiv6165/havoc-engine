@@ -277,11 +277,12 @@ func (s *Server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 
 // ExperimentRequest is the payload accepted by POST /api/experiments.
 type ExperimentRequest struct {
-	Action    string            `json:"action"` // "kill-pod", "inject-latency", "spike-cpu"
-	Namespace string            `json:"namespace"`
-	Selector  string            `json:"selector"`
-	Pod       string            `json:"pod"`
-	Params    ExperimentParams  `json:"params"`
+	Action    string           `json:"action"` // "kill-pod", "inject-latency", "spike-cpu"
+	Namespace string           `json:"namespace"`
+	Selector  string           `json:"selector"`
+	Pod       string           `json:"pod"`
+	Params    ExperimentParams `json:"params"`
+	Label     *string          `json:"label,omitempty"`
 }
 
 type ExperimentParams struct {
@@ -318,6 +319,13 @@ func (s *Server) handlePostExperiments(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "action is required"})
+		return
+	}
+
+	if req.Label != nil && len(*req.Label) > 40 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "label exceeds maximum length of 40 characters"})
 		return
 	}
 
@@ -530,6 +538,11 @@ func (s *Server) runExperiment(expID uuid.UUID, req ExperimentRequest, targetKey
 
 	// Storage persistence
 	if s.repo != nil {
+		var labelPtr *string
+		if req.Label != nil && strings.TrimSpace(*req.Label) != "" {
+			trimmed := strings.TrimSpace(*req.Label)
+			labelPtr = &trimmed
+		}
 		res := &storage.ExperimentResult{
 			ID:               expID,
 			ExperimentType:   req.Action,
@@ -540,6 +553,7 @@ func (s *Server) runExperiment(expID uuid.UUID, req ExperimentRequest, targetKey
 			ResilienceScore:  score,
 			PostmortemReport: reportTextPtr,
 			CreatedAt:        time.Now(),
+			Label:            labelPtr,
 		}
 		_ = s.repo.SaveExperimentResult(ctx, res)
 	}

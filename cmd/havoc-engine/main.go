@@ -44,6 +44,8 @@ func main() {
 	rootCmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "", "Kubernetes namespace (defaults to config default_namespace)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Simulate execution without making actual changes")
 
+	var experimentLabel string
+
 	// kill-pod command
 	var selector string
 	killPodCmd := &cobra.Command{
@@ -66,7 +68,7 @@ func main() {
 			
 			// Scoring & Storage logic
 			if !dryRun {
-				recordExperiment(cfg, "kill-pod", ns, recoveryTimeMs, err)
+				recordExperiment(cfg, "kill-pod", ns, recoveryTimeMs, err, experimentLabel)
 			}
 
 			if err != nil {
@@ -80,6 +82,7 @@ func main() {
 		},
 	}
 	killPodCmd.Flags().StringVarP(&selector, "selector", "s", "", "Label selector (e.g. app=demo)")
+	killPodCmd.Flags().StringVar(&experimentLabel, "label", "", "Optional experiment label (e.g. baseline, hardened)")
 	_ = killPodCmd.MarkFlagRequired("selector")
 
 	// inject-latency command
@@ -107,7 +110,7 @@ func main() {
 			
 			// Scoring & Storage logic
 			if !dryRun {
-				recordExperiment(cfg, "inject-latency", ns, recoveryTimeMs, err)
+				recordExperiment(cfg, "inject-latency", ns, recoveryTimeMs, err, experimentLabel)
 			}
 
 			if err != nil {
@@ -122,6 +125,7 @@ func main() {
 	}
 	injectLatencyCmd.Flags().StringVarP(&podName, "pod", "p", "", "Target pod name")
 	injectLatencyCmd.Flags().IntVarP(&delayMs, "delay", "d", 0, "Delay duration in milliseconds")
+	injectLatencyCmd.Flags().StringVar(&experimentLabel, "label", "", "Optional experiment label (e.g. baseline, hardened)")
 	_ = injectLatencyCmd.MarkFlagRequired("pod")
 	_ = injectLatencyCmd.MarkFlagRequired("delay")
 
@@ -147,7 +151,7 @@ func main() {
 			
 			// Scoring & Storage logic
 			if !dryRun {
-				recordExperiment(cfg, "spike-cpu", ns, recoveryTimeMs, err)
+				recordExperiment(cfg, "spike-cpu", ns, recoveryTimeMs, err, experimentLabel)
 			}
 
 			if err != nil {
@@ -162,6 +166,7 @@ func main() {
 	}
 	spikeCPUCmd.Flags().StringVarP(&podName, "pod", "p", "", "Target pod name")
 	spikeCPUCmd.Flags().IntVarP(&durationSec, "duration", "t", 0, "Stress duration in seconds")
+	spikeCPUCmd.Flags().StringVar(&experimentLabel, "label", "", "Optional experiment label (e.g. baseline, hardened)")
 	_ = spikeCPUCmd.MarkFlagRequired("pod")
 	_ = spikeCPUCmd.MarkFlagRequired("duration")
 
@@ -323,8 +328,13 @@ func main() {
 				}
 			}
 
+			effectiveLabel := exp.Label
+			if experimentLabel != "" {
+				effectiveLabel = experimentLabel
+			}
+
 			if !dryRun {
-				recordExperiment(cfg, exp.Action, exp.Target.Namespace, recoveryTimeMs, expErr)
+				recordExperiment(cfg, exp.Action, exp.Target.Namespace, recoveryTimeMs, expErr, effectiveLabel)
 			}
 
 			if expErr != nil {
@@ -334,6 +344,7 @@ func main() {
 		},
 	}
 	runCmd.Flags().StringVarP(&file, "file", "f", "", "Path to experiment YAML file")
+	runCmd.Flags().StringVar(&experimentLabel, "label", "", "Optional experiment label (e.g. baseline, hardened)")
 	_ = runCmd.MarkFlagRequired("file")
 
 	// history command
@@ -774,7 +785,7 @@ Excessive CPU contention throttled database query processing threads. The safety
 	}
 }
 
-func recordExperiment(cfg *config.Config, expType, namespace string, recoveryTimeMs *int, expErr error) {
+func recordExperiment(cfg *config.Config, expType, namespace string, recoveryTimeMs *int, expErr error, label string) {
 	// Initialize repository
 	repo, err := storage.NewPostgresRepository(cfg.DatabaseDSN)
 	if err != nil {
@@ -837,6 +848,12 @@ func recordExperiment(cfg *config.Config, expType, namespace string, recoveryTim
 		}
 	}
 
+	var labelPtr *string
+	if strings.TrimSpace(label) != "" {
+		l := strings.TrimSpace(label)
+		labelPtr = &l
+	}
+
 	res := &storage.ExperimentResult{
 		ID:               uuid.New(),
 		ExperimentType:   expType,
@@ -847,6 +864,7 @@ func recordExperiment(cfg *config.Config, expType, namespace string, recoveryTim
 		ResilienceScore:  score,
 		PostmortemReport: reportTextPtr,
 		CreatedAt:        time.Now(),
+		Label:            labelPtr,
 	}
 
 	if err := repo.SaveExperimentResult(context.Background(), res); err != nil {

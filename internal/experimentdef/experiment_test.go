@@ -49,6 +49,18 @@ func TestValidate_Valid(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "valid kill-pod with label",
+			exp: Experiment{
+				Name:  "test-kill-label",
+				Label: "baseline",
+				Target: Target{
+					Namespace:     "default",
+					LabelSelector: "app=demo",
+				},
+				Action: ActionKillPod,
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -175,6 +187,19 @@ func TestValidate_Invalid(t *testing.T) {
 				Params: Params{DurationSec: 30, DelayMs: 100},
 			},
 			errContains: "params.delayMs is not supported",
+		},
+		{
+			name: "label exceeds 40 chars",
+			exp: Experiment{
+				Name:  "test-long-label",
+				Label: "this-is-a-very-long-experiment-label-that-exceeds-forty-characters",
+				Target: Target{
+					Namespace:     "default",
+					LabelSelector: "app=demo",
+				},
+				Action: ActionKillPod,
+			},
+			errContains: "label exceeds maximum length of 40 characters",
 		},
 	}
 

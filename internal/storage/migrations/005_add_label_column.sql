@@ -1,0 +1,1 @@
+ALTER TABLE experiments ADD COLUMN IF NOT EXISTS label TEXT;
