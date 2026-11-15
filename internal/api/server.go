@@ -102,6 +102,7 @@ func NewServer(
 	mux.HandleFunc("GET /api/status", s.handleGetStatus)
 	mux.HandleFunc("POST /api/experiments", s.handlePostExperiments)
 	mux.HandleFunc("GET /api/experiments", s.handleGetExperiments)
+	mux.HandleFunc("GET /api/compare", s.handleGetCompare)
 	mux.HandleFunc("GET /api/topology", s.handleGetTopology)
 
 	corsHandler := CORSMiddleware(cfg.Server.AllowedCORS)(mux)
@@ -598,6 +599,48 @@ func (s *Server) handleGetExperiments(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode([]interface{}{})
+}
+
+// handleGetCompare compares experiment runs between two labels.
+func (s *Server) handleGetCompare(w http.ResponseWriter, r *http.Request) {
+	if !s.checkReadAuth(w, r) {
+		return
+	}
+
+	labelA := strings.TrimSpace(r.URL.Query().Get("a"))
+	labelB := strings.TrimSpace(r.URL.Query().Get("b"))
+	action := strings.TrimSpace(r.URL.Query().Get("action"))
+
+	if labelA == "" || labelB == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error": "both 'a' and 'b' query parameters are required (e.g. /api/compare?a=baseline&b=hardened)",
+		})
+		return
+	}
+
+	if s.repo == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error": "database storage is not configured",
+		})
+		return
+	}
+
+	res, err := s.repo.CompareLabels(r.Context(), labelA, labelB, action)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }
 
 // TopologyResponse represents the service graph payload for the frontend.

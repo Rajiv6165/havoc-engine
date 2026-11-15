@@ -778,7 +778,118 @@ Excessive CPU contention throttled database query processing threads. The safety
 		},
 	}
 
-	rootCmd.AddCommand(killPodCmd, injectLatencyCmd, spikeCPUCmd, serveCmd, runCmd, historyCmd, scoreCmd, reportCmd, cronCmd, seedDemoCmd)
+	// compare command
+	var (
+		compareA      string
+		compareB      string
+		compareAction string
+		compareFormat string
+	)
+	compareCmd := &cobra.Command{
+		Use:   "compare",
+		Short: "Compare resilience scores and recovery metrics between two experiment labels",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if compareA == "" || compareB == "" {
+				return fmt.Errorf("both --a and --b flags are required")
+			}
+
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			repo, err := storage.NewPostgresRepository(cfg.DatabaseDSN)
+			if err != nil {
+				return fmt.Errorf("failed to connect to database: %w", err)
+			}
+			defer repo.Close()
+
+			res, err := repo.CompareLabels(context.Background(), compareA, compareB, compareAction)
+			if err != nil {
+				return fmt.Errorf("comparison failed: %w", err)
+			}
+
+			// Format p95 strings
+			p95AStr := "N/A (< 5 runs)"
+			if res.LabelA.P95RecoveryMs != nil {
+				p95AStr = fmt.Sprintf("%.1fms", *res.LabelA.P95RecoveryMs)
+			}
+			p95BStr := "N/A (< 5 runs)"
+			if res.LabelB.P95RecoveryMs != nil {
+				p95BStr = fmt.Sprintf("%.1fms", *res.LabelB.P95RecoveryMs)
+			}
+			p95DiffStr := "N/A"
+			if res.Difference.P95RecoveryMsDelta != nil {
+				sign := ""
+				if *res.Difference.P95RecoveryMsDelta > 0 {
+					sign = "+"
+				}
+				p95DiffStr = fmt.Sprintf("%s%.1fms", sign, *res.Difference.P95RecoveryMsDelta)
+			}
+
+			scoreDiffSign := ""
+			if res.Difference.ScoreDelta > 0 {
+				scoreDiffSign = "+"
+			}
+			scoreDiffStr := fmt.Sprintf("%s%.1f", scoreDiffSign, res.Difference.ScoreDelta)
+
+			recDiffSign := ""
+			if res.Difference.RecoveryMsDelta > 0 {
+				recDiffSign = "+"
+			}
+			recDiffStr := fmt.Sprintf("%s%.1fms", recDiffSign, res.Difference.RecoveryMsDelta)
+
+			safetyDiffSign := ""
+			if res.Difference.SafetyInterventionsDelta > 0 {
+				safetyDiffSign = "+"
+			}
+			safetyDiffStr := fmt.Sprintf("%s%d", safetyDiffSign, res.Difference.SafetyInterventionsDelta)
+
+			if compareFormat == "markdown" {
+				if res.Warning != "" {
+					fmt.Printf("> **Warning:** %s\n\n", res.Warning)
+				}
+				fmt.Printf("| Metric | %s (`%s`) | %s (`%s`) | Difference (Δ) |\n", res.LabelA.Label, res.LabelA.Label, res.LabelB.Label, res.LabelB.Label)
+				fmt.Println("|---|---|---|---|")
+				fmt.Printf("| Run Count | %d | %d | %d |\n", res.LabelA.RunCount, res.LabelB.RunCount, res.LabelB.RunCount-res.LabelA.RunCount)
+				fmt.Printf("| Avg Resilience Score | %.1f | %.1f | %s |\n", res.LabelA.AvgScore, res.LabelB.AvgScore, scoreDiffStr)
+				fmt.Printf("| Avg Recovery Time | %.1fms | %.1fms | %s |\n", res.LabelA.AvgRecoveryMs, res.LabelB.AvgRecoveryMs, recDiffStr)
+				fmt.Printf("| P95 Recovery Time | %s | %s | %s |\n", p95AStr, p95BStr, p95DiffStr)
+				fmt.Printf("| Safety Interventions | %d | %d | %s |\n", res.LabelA.SafetyInterventions, res.LabelB.SafetyInterventions, safetyDiffStr)
+			} else {
+				if res.Warning != "" {
+					fmt.Printf("\n⚠️  WARNING: %s\n\n", res.Warning)
+				}
+				fmt.Println("==========================================================================================")
+				title := fmt.Sprintf("EXPERIMENT COMPARISON: %s vs %s", res.LabelA.Label, res.LabelB.Label)
+				if compareAction != "" {
+					title += fmt.Sprintf(" (action: %s)", compareAction)
+				}
+				fmt.Println(title)
+				fmt.Println("==========================================================================================")
+				colA := fmt.Sprintf("%s (%s)", res.LabelA.Label, res.LabelA.Label)
+				colB := fmt.Sprintf("%s (%s)", res.LabelB.Label, res.LabelB.Label)
+				fmt.Printf("%-24s | %-20s | %-20s | %-16s\n", "Metric", colA, colB, "Difference (Δ)")
+				fmt.Println(strings.Repeat("-", 88))
+				fmt.Printf("%-24s | %-20d | %-20d | %-16d\n", "Run Count", res.LabelA.RunCount, res.LabelB.RunCount, res.LabelB.RunCount-res.LabelA.RunCount)
+				fmt.Printf("%-24s | %-20.1f | %-20.1f | %-16s\n", "Avg Resilience Score", res.LabelA.AvgScore, res.LabelB.AvgScore, scoreDiffStr)
+				fmt.Printf("%-24s | %-20s | %-20s | %-16s\n", "Avg Recovery Time", fmt.Sprintf("%.1fms", res.LabelA.AvgRecoveryMs), fmt.Sprintf("%.1fms", res.LabelB.AvgRecoveryMs), recDiffStr)
+				fmt.Printf("%-24s | %-20s | %-20s | %-16s\n", "P95 Recovery Time", p95AStr, p95BStr, p95DiffStr)
+				fmt.Printf("%-24s | %-20d | %-20d | %-16s\n", "Safety Interventions", res.LabelA.SafetyInterventions, res.LabelB.SafetyInterventions, safetyDiffStr)
+				fmt.Println("==========================================================================================")
+			}
+
+			return nil
+		},
+	}
+	compareCmd.Flags().StringVar(&compareA, "a", "", "First experiment label to compare (e.g. baseline)")
+	compareCmd.Flags().StringVar(&compareB, "b", "", "Second experiment label to compare (e.g. hardened)")
+	compareCmd.Flags().StringVar(&compareAction, "action", "", "Optional experiment action filter (e.g. kill-pod)")
+	compareCmd.Flags().StringVar(&compareFormat, "format", "table", "Output format: table or markdown")
+	_ = compareCmd.MarkFlagRequired("a")
+	_ = compareCmd.MarkFlagRequired("b")
+
+	rootCmd.AddCommand(killPodCmd, injectLatencyCmd, spikeCPUCmd, serveCmd, runCmd, historyCmd, scoreCmd, reportCmd, cronCmd, seedDemoCmd, compareCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

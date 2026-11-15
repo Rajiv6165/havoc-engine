@@ -49,6 +49,8 @@ type ExperimentRepository interface {
 	GetRecentScheduledRuns(ctx context.Context, limit int) ([]ScheduledRun, error)
 	GetSchedulerState(ctx context.Context) (bool, error)
 	SetSchedulerState(ctx context.Context, paused bool) error
+	GetExperimentsByLabel(ctx context.Context, label string, action string) ([]ExperimentResult, error)
+	CompareLabels(ctx context.Context, labelA, labelB, action string) (*ComparisonResult, error)
 }
 
 // PostgresRepository is a PostgreSQL implementation of ExperimentRepository.

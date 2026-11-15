@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"sort"
@@ -290,5 +291,216 @@ func TestSchedulerAuditLog(t *testing.T) {
 	}
 	if foundSkipped.Outcome != "skipped_paused" {
 		t.Errorf("expected outcome 'skipped_paused', got %q", foundSkipped.Outcome)
+	}
+}
+
+func TestCalculateLabelStats_Unit(t *testing.T) {
+	// 1. Empty runs
+	emptyStats := CalculateLabelStats("empty", nil)
+	if emptyStats.RunCount != 0 || emptyStats.AvgScore != 0 || emptyStats.AvgRecoveryMs != 0 || emptyStats.P95RecoveryMs != nil {
+		t.Errorf("unexpected stats for empty runs: %+v", emptyStats)
+	}
+
+	// 2. 5 runs for p95 calculation and correct averages
+	rec1, rec2, rec3, rec4, rec5 := 1000, 2000, 3000, 4000, 5000
+	runs := []ExperimentResult{
+		{ResilienceScore: 60, RecoveryTimeMs: &rec1, SafetyIntervened: false},
+		{ResilienceScore: 70, RecoveryTimeMs: &rec2, SafetyIntervened: false},
+		{ResilienceScore: 80, RecoveryTimeMs: &rec3, SafetyIntervened: true},
+		{ResilienceScore: 90, RecoveryTimeMs: &rec4, SafetyIntervened: false},
+		{ResilienceScore: 100, RecoveryTimeMs: &rec5, SafetyIntervened: false},
+	}
+	stats := CalculateLabelStats("test-p95", runs)
+	if stats.RunCount != 5 {
+		t.Errorf("expected RunCount 5, got %d", stats.RunCount)
+	}
+	if stats.AvgScore != 80.0 {
+		t.Errorf("expected AvgScore 80.0, got %f", stats.AvgScore)
+	}
+	if stats.AvgRecoveryMs != 3000.0 {
+		t.Errorf("expected AvgRecoveryMs 3000.0, got %f", stats.AvgRecoveryMs)
+	}
+	if stats.P95RecoveryMs == nil || *stats.P95RecoveryMs != 5000.0 {
+		t.Errorf("expected P95RecoveryMs 5000.0, got %v", stats.P95RecoveryMs)
+	}
+	if stats.SafetyInterventions != 1 {
+		t.Errorf("expected SafetyInterventions 1, got %d", stats.SafetyInterventions)
+	}
+
+	// 3. 2 runs (too few for p95, p95 must be nil)
+	smallRuns := []ExperimentResult{
+		{ResilienceScore: 50, RecoveryTimeMs: &rec1},
+		{ResilienceScore: 70, RecoveryTimeMs: &rec2},
+	}
+	smallStats := CalculateLabelStats("small", smallRuns)
+	if smallStats.RunCount != 2 {
+		t.Errorf("expected RunCount 2, got %d", smallStats.RunCount)
+	}
+	if smallStats.P95RecoveryMs != nil {
+		t.Errorf("expected P95RecoveryMs nil for <5 runs, got %v", smallStats.P95RecoveryMs)
+	}
+}
+
+func TestCompareLabels_Storage(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	labelA := fmt.Sprintf("baseline-%d", time.Now().UnixNano())
+	labelB := fmt.Sprintf("hardened-%d", time.Now().UnixNano())
+	labelSmall := fmt.Sprintf("small-%d", time.Now().UnixNano())
+
+	now := time.Now()
+
+	// Insert 5 baseline runs (seeded=false)
+	// scores: 50, 60, 70, 80, 90 => avg = 70.0
+	// recoveries: 1000, 2000, 3000, 4000, 5000 => avg = 3000.0, p95 = 5000.0
+	for i, score := range []int{50, 60, 70, 80, 90} {
+		rec := (i + 1) * 1000
+		intervened := (i == 0) // 1 safety intervention
+		err := repo.SaveExperimentResult(ctx, &ExperimentResult{
+			ID:               uuid.New(),
+			ExperimentType:   "kill-pod",
+			TargetNamespace:  "demo",
+			RecoveryTimeMs:   &rec,
+			SafetyIntervened: intervened,
+			ResilienceScore:  score,
+			CreatedAt:        now.Add(time.Duration(i) * time.Minute),
+			Seeded:           false,
+			Label:            &labelA,
+		})
+		if err != nil {
+			t.Fatalf("failed to insert baseline experiment: %v", err)
+		}
+	}
+
+	// Insert 1 baseline run with seeded = TRUE (must be EXCLUDED from comparison!)
+	recSeeded := 100
+	err := repo.SaveExperimentResult(ctx, &ExperimentResult{
+		ID:               uuid.New(),
+		ExperimentType:   "kill-pod",
+		TargetNamespace:  "demo",
+		RecoveryTimeMs:   &recSeeded,
+		SafetyIntervened: false,
+		ResilienceScore:  100, // Would skew average if not excluded
+		CreatedAt:        now.Add(10 * time.Minute),
+		Seeded:           true,
+		Label:            &labelA,
+	})
+	if err != nil {
+		t.Fatalf("failed to insert seeded baseline experiment: %v", err)
+	}
+
+	// Insert 5 hardened runs (seeded=false)
+	// scores: 85, 90, 95, 95, 100 => avg = 93.0
+	// recoveries: 500, 600, 700, 800, 900 => avg = 700.0, p95 = 900.0
+	for i, score := range []int{85, 90, 95, 95, 100} {
+		rec := 500 + (i * 100)
+		err := repo.SaveExperimentResult(ctx, &ExperimentResult{
+			ID:               uuid.New(),
+			ExperimentType:   "kill-pod",
+			TargetNamespace:  "demo",
+			RecoveryTimeMs:   &rec,
+			SafetyIntervened: false,
+			ResilienceScore:  score,
+			CreatedAt:        now.Add(time.Duration(i+20) * time.Minute),
+			Seeded:           false,
+			Label:            &labelB,
+		})
+		if err != nil {
+			t.Fatalf("failed to insert hardened experiment: %v", err)
+		}
+	}
+
+	// Insert 2 small-sample runs (seeded=false)
+	for i, score := range []int{75, 85} {
+		rec := 1500
+		err := repo.SaveExperimentResult(ctx, &ExperimentResult{
+			ID:               uuid.New(),
+			ExperimentType:   "kill-pod",
+			TargetNamespace:  "demo",
+			RecoveryTimeMs:   &rec,
+			SafetyIntervened: false,
+			ResilienceScore:  score,
+			CreatedAt:        now.Add(time.Duration(i+40) * time.Minute),
+			Seeded:           false,
+			Label:            &labelSmall,
+		})
+		if err != nil {
+			t.Fatalf("failed to insert small sample experiment: %v", err)
+		}
+	}
+
+	// 1. Compare baseline vs hardened (5 runs each, seeded row excluded)
+	res, err := repo.CompareLabels(ctx, labelA, labelB, "")
+	if err != nil {
+		t.Fatalf("CompareLabels failed: %v", err)
+	}
+
+	if res.LabelA.RunCount != 5 {
+		t.Errorf("expected labelA RunCount 5 (seeded row excluded), got %d", res.LabelA.RunCount)
+	}
+	if res.LabelA.AvgScore != 70.0 {
+		t.Errorf("expected labelA AvgScore 70.0, got %f", res.LabelA.AvgScore)
+	}
+	if res.LabelA.AvgRecoveryMs != 3000.0 {
+		t.Errorf("expected labelA AvgRecoveryMs 3000.0, got %f", res.LabelA.AvgRecoveryMs)
+	}
+	if res.LabelA.P95RecoveryMs == nil || *res.LabelA.P95RecoveryMs != 5000.0 {
+		t.Errorf("expected labelA P95RecoveryMs 5000.0, got %v", res.LabelA.P95RecoveryMs)
+	}
+	if res.LabelA.SafetyInterventions != 1 {
+		t.Errorf("expected labelA SafetyInterventions 1, got %d", res.LabelA.SafetyInterventions)
+	}
+
+	if res.LabelB.RunCount != 5 {
+		t.Errorf("expected labelB RunCount 5, got %d", res.LabelB.RunCount)
+	}
+	if res.LabelB.AvgScore != 93.0 {
+		t.Errorf("expected labelB AvgScore 93.0, got %f", res.LabelB.AvgScore)
+	}
+	if res.LabelB.AvgRecoveryMs != 700.0 {
+		t.Errorf("expected labelB AvgRecoveryMs 700.0, got %f", res.LabelB.AvgRecoveryMs)
+	}
+	if res.LabelB.P95RecoveryMs == nil || *res.LabelB.P95RecoveryMs != 900.0 {
+		t.Errorf("expected labelB P95RecoveryMs 900.0, got %v", res.LabelB.P95RecoveryMs)
+	}
+
+	// Differences
+	if res.Difference.ScoreDelta != 23.0 {
+		t.Errorf("expected ScoreDelta 23.0, got %f", res.Difference.ScoreDelta)
+	}
+	if res.Difference.RecoveryMsDelta != -2300.0 {
+		t.Errorf("expected RecoveryMsDelta -2300.0, got %f", res.Difference.RecoveryMsDelta)
+	}
+	if res.Difference.P95RecoveryMsDelta == nil || *res.Difference.P95RecoveryMsDelta != -4100.0 {
+		t.Errorf("expected P95RecoveryMsDelta -4100.0, got %v", res.Difference.P95RecoveryMsDelta)
+	}
+	if res.Difference.SafetyInterventionsDelta != -1 {
+		t.Errorf("expected SafetyInterventionsDelta -1, got %d", res.Difference.SafetyInterventionsDelta)
+	}
+	if res.Warning != "" {
+		t.Errorf("expected no warning for 5 runs each, got %q", res.Warning)
+	}
+	if !res.HasSufficientData {
+		t.Errorf("expected HasSufficientData to be true")
+	}
+
+	// 2. Test too-few-runs warning (< 3 runs)
+	resSmall, err := repo.CompareLabels(ctx, labelSmall, labelB, "")
+	if err != nil {
+		t.Fatalf("CompareLabels with small sample failed: %v", err)
+	}
+	if resSmall.HasSufficientData {
+		t.Errorf("expected HasSufficientData to be false for small sample")
+	}
+	if resSmall.Warning == "" || !strings.Contains(resSmall.Warning, "sample size is too small") {
+		t.Errorf("expected warning about small sample, got %q", resSmall.Warning)
+	}
+
+	// 3. Test missing / no data
+	_, err = repo.CompareLabels(ctx, "nonexistent-label", labelB, "")
+	if err == nil {
+		t.Errorf("expected error when comparing nonexistent label, got nil")
 	}
 }

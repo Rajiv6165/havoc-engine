@@ -59,6 +59,49 @@ func (m *mockRepo) SetSchedulerState(ctx context.Context, paused bool) error {
 	return nil
 }
 
+func (m *mockRepo) GetExperimentsByLabel(ctx context.Context, label string, action string) ([]storage.ExperimentResult, error) {
+	var matches []storage.ExperimentResult
+	for _, exp := range m.experiments {
+		if !exp.Seeded && exp.Label != nil && *exp.Label == label {
+			if action == "" || exp.ExperimentType == action {
+				matches = append(matches, exp)
+			}
+		}
+	}
+	return matches, nil
+}
+
+func (m *mockRepo) CompareLabels(ctx context.Context, labelA, labelB, action string) (*storage.ComparisonResult, error) {
+	runsA, err := m.GetExperimentsByLabel(ctx, labelA, action)
+	if err != nil {
+		return nil, err
+	}
+	if len(runsA) == 0 {
+		return nil, fmt.Errorf("no real experiment data found for label %q", labelA)
+	}
+
+	runsB, err := m.GetExperimentsByLabel(ctx, labelB, action)
+	if err != nil {
+		return nil, err
+	}
+	if len(runsB) == 0 {
+		return nil, fmt.Errorf("no real experiment data found for label %q", labelB)
+	}
+
+	statsA := storage.CalculateLabelStats(labelA, runsA)
+	statsB := storage.CalculateLabelStats(labelB, runsB)
+
+	return &storage.ComparisonResult{
+		LabelA: statsA,
+		LabelB: statsB,
+		Difference: storage.ComparisonDelta{
+			ScoreDelta:      statsB.AvgScore - statsA.AvgScore,
+			RecoveryMsDelta: statsB.AvgRecoveryMs - statsA.AvgRecoveryMs,
+		},
+		HasSufficientData: statsA.RunCount >= 3 && statsB.RunCount >= 3,
+	}, nil
+}
+
 func int32Ptr(i int32) *int32 {
 	return &i
 }
@@ -622,5 +665,79 @@ func TestAPI_KubeSystem_Blocked(t *testing.T) {
 	_ = json.NewDecoder(w.Body).Decode(&errResp)
 	if !strings.Contains(errResp["error"], "system namespace and is blocked by the hard-coded denylist") {
 		t.Errorf("expected system namespace denylist error, got: %v", errResp)
+	}
+}
+
+func TestAPI_GetCompare(t *testing.T) {
+	labelA := "baseline"
+	labelB := "hardened"
+	rec1, rec2 := 3000, 1000
+
+	mock := &mockRepo{
+		experiments: []storage.ExperimentResult{
+			{
+				ID:              uuid.New(),
+				ExperimentType:  "kill-pod",
+				TargetNamespace: "demo",
+				RecoveryTimeMs:  &rec1,
+				ResilienceScore: 60,
+				Seeded:          false,
+				Label:           &labelA,
+			},
+			{
+				ID:              uuid.New(),
+				ExperimentType:  "kill-pod",
+				TargetNamespace: "demo",
+				RecoveryTimeMs:  &rec2,
+				ResilienceScore: 90,
+				Seeded:          false,
+				Label:           &labelB,
+			},
+		},
+	}
+
+	cfg := &config.Config{
+		DefaultNamespace: "demo",
+		Server: config.ServerConfig{
+			Port: 8080,
+		},
+	}
+
+	srv := NewServer(cfg, nil, mock, nil, nil)
+
+	// 1. Missing query params
+	reqMissing := httptest.NewRequest(http.MethodGet, "/api/compare?a=baseline", nil)
+	wMissing := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(wMissing, reqMissing)
+	if wMissing.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing b param, got %d", wMissing.Code)
+	}
+
+	// 2. Valid query params
+	reqValid := httptest.NewRequest(http.MethodGet, "/api/compare?a=baseline&b=hardened", nil)
+	wValid := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(wValid, reqValid)
+	if wValid.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", wValid.Code, wValid.Body.String())
+	}
+
+	var res storage.ComparisonResult
+	if err := json.NewDecoder(wValid.Body).Decode(&res); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if res.LabelA.Label != "baseline" || res.LabelB.Label != "hardened" {
+		t.Errorf("unexpected labels in comparison result: %+v", res)
+	}
+	if res.Difference.ScoreDelta != 30.0 {
+		t.Errorf("expected ScoreDelta 30.0, got %f", res.Difference.ScoreDelta)
+	}
+
+	// 3. Nonexistent label
+	reqNonexistent := httptest.NewRequest(http.MethodGet, "/api/compare?a=baseline&b=unknown", nil)
+	wNonexistent := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(wNonexistent, reqNonexistent)
+	if wNonexistent.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for nonexistent label, got %d", wNonexistent.Code)
 	}
 }
