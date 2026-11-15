@@ -113,6 +113,24 @@ The script automatically:
 
 ---
 
+## 🔬 Resilience Comparison Case Study
+
+Validate how architectural hardening directly improves real-world recovery and resilience metrics under chaos conditions. Compare deliberately fragile baseline deployments against hardened multi-replica architectures configured with PodDisruptionBudgets, health probes, resource quotas, and topology spread constraints.
+
+👉 **Read the full case study & methodology**: [docs/CASE_STUDY.md](docs/CASE_STUDY.md)
+
+Run your own before/after comparison across experiment labels:
+```bash
+# Tag chaos runs with a label
+havoc-engine kill-pod -n demo -s app=frontend --label=baseline
+havoc-engine kill-pod -n demo -s app=frontend --label=hardened
+
+# Output side-by-side comparison table
+havoc-engine compare --a=baseline --b=hardened --format=markdown
+```
+
+---
+
 ## 💻 Tech Stack
 
 - **Backend / CLI**: Go (1.22+), `k8s.io/client-go`, Gorilla WebSocket, Cobra CLI.
@@ -181,12 +199,13 @@ Havoc Engine incorporates defensive safeguards to protect cluster stability and 
 - `havoc-engine seed-demo`: Populates the database with realistic baseline experiments, scores, and AI postmortems (persisted with a `seeded` flag and displayed with a `sample data` badge in the dashboard history), and tests live cluster connectivity.
 
 ### Chaos Actions
-- `havoc-engine kill-pod --namespace <ns> --selector <label>`: Deletes a random pod matching the label selector.
-- `havoc-engine inject-latency --namespace <ns> --pod <name> --delay <ms>`: Injects network delay using `tc`/`netem` via an ephemeral container.
-- `havoc-engine spike-cpu --namespace <ns> --pod <name> --duration <s>`: Stresses CPU inside a target pod using a `stress-ng` ephemeral container.
+- `havoc-engine kill-pod --namespace <ns> --selector <label> [--label <variant>]`: Deletes a random pod matching the label selector.
+- `havoc-engine inject-latency --namespace <ns> --pod <name> --delay <ms> [--label <variant>]`: Injects network delay using `tc`/`netem` via an ephemeral container.
+- `havoc-engine spike-cpu --namespace <ns> --pod <name> --duration <s> [--label <variant>]`: Stresses CPU inside a target pod using a `stress-ng` ephemeral container.
 
 ### Experiment Management
-- `havoc-engine run --file <path/to/experiment.yaml>`: Run a complex experiment from a YAML definition file.
+- `havoc-engine run --file <path/to/experiment.yaml> [--label <variant>]`: Run a complex experiment from a YAML definition file.
+- `havoc-engine compare --a <label> --b <label> [--action <type>] [--format table|markdown]`: Compares resilience scores, recovery times, P95, and safety interventions across two experiment labels.
 - `havoc-engine history`: View recent chaos experiment history and their resilience scores.
 - `havoc-engine score`: Calculate and print the current average resilience score and trend.
 - `havoc-engine report --latest` (or `--id <uuid>`): View or generate an AI postmortem report for an experiment.
