@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -13,25 +12,12 @@ import (
 	"github.com/google/uuid"
 )
 
-func setupTestDB(t *testing.T) (*PostgresRepository, func()) {
-	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://postgres:postgres@localhost:5432/havoc?sslmode=disable"
-	}
-	repo, err := NewPostgresRepository(dsn)
-	if err != nil {
-		t.Skipf("Skipping storage tests because database is not available: %v", err)
-	}
-
-	cleanup := func() {
-		_ = repo.Close()
-	}
-	return repo, cleanup
+func setupTestDB(t *testing.T, runMigrations bool) (*PostgresRepository, func()) {
+	return SetupIsolatedTestDB(t, runMigrations)
 }
 
 func TestMigrations_AppliedOnceAndTracked(t *testing.T) {
-	repo, cleanup := setupTestDB(t)
+	repo, cleanup := setupTestDB(t, false)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -104,7 +90,7 @@ func TestMigrations_AppliedOnceAndTracked(t *testing.T) {
 }
 
 func TestSaveAndFetchExperimentResults(t *testing.T) {
-	repo, cleanup := setupTestDB(t)
+	repo, cleanup := setupTestDB(t, true)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -221,7 +207,7 @@ func TestSaveAndFetchExperimentResults(t *testing.T) {
 }
 
 func TestSchedulerAuditLog(t *testing.T) {
-	repo, cleanup := setupTestDB(t)
+	repo, cleanup := setupTestDB(t, true)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -342,7 +328,7 @@ func TestCalculateLabelStats_Unit(t *testing.T) {
 }
 
 func TestCompareLabels_Storage(t *testing.T) {
-	repo, cleanup := setupTestDB(t)
+	repo, cleanup := setupTestDB(t, true)
 	defer cleanup()
 	ctx := context.Background()
 

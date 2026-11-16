@@ -72,21 +72,11 @@ func TestScheduler_AllowedWindows(t *testing.T) {
 }
 
 func TestScheduler_Tick(t *testing.T) {
-	// 1. Setup a test database
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://postgres:postgres@localhost:5432/havoc?sslmode=disable"
-	}
-	repo, err := storage.NewPostgresRepository(dsn)
-	if err != nil {
-		t.Skipf("Skipping integration test because DB is not available: %v", err)
-	}
-	defer repo.Close()
+	// 1. Setup an isolated test database schema
+	repo, cleanup := storage.SetupIsolatedTestDB(t, true)
+	defer cleanup()
 
 	ctx := context.Background()
-	if err := repo.RunMigrations(ctx); err != nil {
-		t.Fatalf("Database migrations failed: %v", err)
-	}
 	
 	// Ensure not paused
 	_ = repo.SetSchedulerState(ctx, false)
@@ -94,7 +84,7 @@ func TestScheduler_Tick(t *testing.T) {
 	// Create a dummy experiment dir
 	tempDir := t.TempDir()
 	expFile := filepath.Join(tempDir, "test-exp.yaml")
-	err = os.WriteFile(expFile, []byte("name: test\naction: test-action"), 0644)
+	err := os.WriteFile(expFile, []byte("name: test\naction: test-action"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
