@@ -15,6 +15,7 @@ const (
 	EventRecovered         EventType = "recovered"
 	EventAborted           EventType = "aborted"
 	EventBlocked           EventType = "blocked"
+	EventProbeResult       EventType = "probe_result"
 	EventCompleted         EventType = "completed"
 )
 

@@ -15,6 +15,8 @@ type LabelStats struct {
 	AvgRecoveryMs       float64  `json:"avgRecoveryMs"`
 	P95RecoveryMs       *float64 `json:"p95RecoveryMs,omitempty"`
 	SafetyInterventions int      `json:"safetyInterventions"`
+	AvgAvailability     *float64 `json:"avgAvailability,omitempty"`
+	AvgDowntimeMs       *float64 `json:"avgDowntimeMs,omitempty"`
 }
 
 // ComparisonDelta holds differences between two labels (LabelB - LabelA).
@@ -23,6 +25,8 @@ type ComparisonDelta struct {
 	RecoveryMsDelta          float64  `json:"recoveryMsDelta"`
 	P95RecoveryMsDelta       *float64 `json:"p95RecoveryMsDelta,omitempty"`
 	SafetyInterventionsDelta int      `json:"safetyInterventionsDelta"`
+	AvailabilityDelta        *float64 `json:"availabilityDelta,omitempty"`
+	DowntimeMsDelta          *float64 `json:"downtimeMsDelta,omitempty"`
 }
 
 // ComparisonResult encapsulates the before/after comparison between labelA and labelB.
@@ -103,6 +107,11 @@ func CalculateLabelStats(label string, experiments []ExperimentResult) LabelStat
 	totalScore := 0
 	var recoveryTimes []int
 	safetyCount := 0
+	var (
+		totalAvail    float64
+		totalDowntime int
+		probeCount    int
+	)
 
 	for _, exp := range experiments {
 		totalScore += exp.ResilienceScore
@@ -112,10 +121,29 @@ func CalculateLabelStats(label string, experiments []ExperimentResult) LabelStat
 		if exp.SafetyIntervened {
 			safetyCount++
 		}
+		if exp.ProbeRequests != nil && *exp.ProbeRequests > 0 {
+			probeCount++
+			failed := 0
+			if exp.ProbeFailures != nil {
+				failed = *exp.ProbeFailures
+			}
+			avail := (float64(*exp.ProbeRequests-failed) / float64(*exp.ProbeRequests)) * 100.0
+			totalAvail += avail
+			if exp.ProbeDowntimeMs != nil {
+				totalDowntime += *exp.ProbeDowntimeMs
+			}
+		}
 	}
 
 	stats.AvgScore = math.Round((float64(totalScore)/float64(len(experiments)))*10) / 10
 	stats.SafetyInterventions = safetyCount
+
+	if probeCount > 0 {
+		avgAvail := math.Round((totalAvail/float64(probeCount))*10) / 10
+		avgDown := math.Round((float64(totalDowntime)/float64(probeCount))*10) / 10
+		stats.AvgAvailability = &avgAvail
+		stats.AvgDowntimeMs = &avgDown
+	}
 
 	if len(recoveryTimes) > 0 {
 		sumRecovery := 0
@@ -175,6 +203,16 @@ func (r *PostgresRepository) CompareLabels(ctx context.Context, labelA, labelB, 
 	if statsA.P95RecoveryMs != nil && statsB.P95RecoveryMs != nil {
 		p95Delta := math.Round((*statsB.P95RecoveryMs-*statsA.P95RecoveryMs)*10) / 10
 		delta.P95RecoveryMsDelta = &p95Delta
+	}
+
+	if statsA.AvgAvailability != nil && statsB.AvgAvailability != nil {
+		availDelta := math.Round((*statsB.AvgAvailability-*statsA.AvgAvailability)*10) / 10
+		delta.AvailabilityDelta = &availDelta
+	}
+
+	if statsA.AvgDowntimeMs != nil && statsB.AvgDowntimeMs != nil {
+		dtDelta := math.Round((*statsB.AvgDowntimeMs-*statsA.AvgDowntimeMs)*10) / 10
+		delta.DowntimeMsDelta = &dtDelta
 	}
 
 	var warning string

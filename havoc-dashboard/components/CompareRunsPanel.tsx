@@ -9,6 +9,8 @@ interface LabelStats {
   avgRecoveryMs: number;
   p95RecoveryMs?: number;
   safetyInterventions: number;
+  avgAvailability?: number;
+  avgDowntimeMs?: number;
 }
 
 interface ComparisonDelta {
@@ -16,6 +18,8 @@ interface ComparisonDelta {
   recoveryMsDelta: number;
   p95RecoveryMsDelta?: number;
   safetyInterventionsDelta: number;
+  availabilityDelta?: number;
+  downtimeMsDelta?: number;
 }
 
 interface ComparisonResult {
@@ -225,7 +229,7 @@ export default function CompareRunsPanel() {
       {/* State 6: Full comparison data */}
       {!isLoading && !fetchError && comparison && comparison.hasSufficientData && (
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {/* Resilience Score Card */}
             <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800">
               <span className="text-xs text-zinc-400 font-medium">Avg Resilience Score</span>
@@ -280,6 +284,47 @@ export default function CompareRunsPanel() {
                   }`}
                 >
                   {comparison.difference.recoveryMsDelta > 0 ? `+${comparison.difference.recoveryMsDelta}ms` : `${comparison.difference.recoveryMsDelta}ms`}
+                </span>
+              </div>
+            </div>
+
+            {/* Availability & Downtime Card */}
+            <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800">
+              <span className="text-xs text-zinc-400 font-medium">Availability & Downtime</span>
+              <div className="mt-2 flex items-baseline justify-between text-xs font-mono">
+                <div>
+                  <span className="text-zinc-500">{comparison.labelA.label}:</span>{' '}
+                  <span className="text-zinc-300">
+                    {comparison.labelA.avgAvailability != null ? `${comparison.labelA.avgAvailability}%` : 'N/A'}
+                  </span>
+                  <span className="text-zinc-600 block text-[11px]">
+                    {comparison.labelA.avgDowntimeMs != null ? `${comparison.labelA.avgDowntimeMs}ms down` : 'no probe'}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-zinc-500">{comparison.labelB.label}:</span>{' '}
+                  <span className="text-white">
+                    {comparison.labelB.avgAvailability != null ? `${comparison.labelB.avgAvailability}%` : 'N/A'}
+                  </span>
+                  <span className="text-zinc-600 block text-[11px]">
+                    {comparison.labelB.avgDowntimeMs != null ? `${comparison.labelB.avgDowntimeMs}ms down` : 'no probe'}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-2 pt-2 border-t border-zinc-800/80 flex justify-between items-center text-xs">
+                <span className="text-zinc-500">Avail Δ:</span>
+                <span
+                  className={`font-mono font-semibold ${
+                    comparison.difference.availabilityDelta && comparison.difference.availabilityDelta > 0
+                      ? 'text-emerald-400'
+                      : comparison.difference.availabilityDelta && comparison.difference.availabilityDelta < 0
+                      ? 'text-red-400'
+                      : 'text-zinc-400'
+                  }`}
+                >
+                  {comparison.difference.availabilityDelta != null
+                    ? `${comparison.difference.availabilityDelta > 0 ? '+' : ''}${comparison.difference.availabilityDelta}%`
+                    : 'N/A'}
                 </span>
               </div>
             </div>

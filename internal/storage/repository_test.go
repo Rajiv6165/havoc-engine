@@ -307,9 +307,11 @@ func TestCalculateLabelStats_Unit(t *testing.T) {
 
 	// 2. 5 runs for p95 calculation and correct averages
 	rec1, rec2, rec3, rec4, rec5 := 1000, 2000, 3000, 4000, 5000
+	pReq1, pFail1, pDown1 := 100, 10, 1000
+	pReq2, pFail2, pDown2 := 100, 0, 0
 	runs := []ExperimentResult{
-		{ResilienceScore: 60, RecoveryTimeMs: &rec1, SafetyIntervened: false},
-		{ResilienceScore: 70, RecoveryTimeMs: &rec2, SafetyIntervened: false},
+		{ResilienceScore: 60, RecoveryTimeMs: &rec1, SafetyIntervened: false, ProbeRequests: &pReq1, ProbeFailures: &pFail1, ProbeDowntimeMs: &pDown1},
+		{ResilienceScore: 70, RecoveryTimeMs: &rec2, SafetyIntervened: false, ProbeRequests: &pReq2, ProbeFailures: &pFail2, ProbeDowntimeMs: &pDown2},
 		{ResilienceScore: 80, RecoveryTimeMs: &rec3, SafetyIntervened: true},
 		{ResilienceScore: 90, RecoveryTimeMs: &rec4, SafetyIntervened: false},
 		{ResilienceScore: 100, RecoveryTimeMs: &rec5, SafetyIntervened: false},
@@ -329,6 +331,12 @@ func TestCalculateLabelStats_Unit(t *testing.T) {
 	}
 	if stats.SafetyInterventions != 1 {
 		t.Errorf("expected SafetyInterventions 1, got %d", stats.SafetyInterventions)
+	}
+	if stats.AvgAvailability == nil || *stats.AvgAvailability != 95.0 {
+		t.Errorf("expected AvgAvailability 95.0, got %v", stats.AvgAvailability)
+	}
+	if stats.AvgDowntimeMs == nil || *stats.AvgDowntimeMs != 500.0 {
+		t.Errorf("expected AvgDowntimeMs 500.0, got %v", stats.AvgDowntimeMs)
 	}
 
 	// 3. 2 runs (too few for p95, p95 must be nil)

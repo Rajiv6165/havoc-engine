@@ -902,6 +902,40 @@ Excessive CPU contention throttled database query processing threads. The safety
 			}
 			safetyDiffStr := fmt.Sprintf("%s%d", safetyDiffSign, res.Difference.SafetyInterventionsDelta)
 
+			availAStr := "N/A"
+			if res.LabelA.AvgAvailability != nil {
+				availAStr = fmt.Sprintf("%.1f%%", *res.LabelA.AvgAvailability)
+			}
+			availBStr := "N/A"
+			if res.LabelB.AvgAvailability != nil {
+				availBStr = fmt.Sprintf("%.1f%%", *res.LabelB.AvgAvailability)
+			}
+			availDiffStr := "N/A"
+			if res.Difference.AvailabilityDelta != nil {
+				sign := ""
+				if *res.Difference.AvailabilityDelta > 0 {
+					sign = "+"
+				}
+				availDiffStr = fmt.Sprintf("%s%.1f%%", sign, *res.Difference.AvailabilityDelta)
+			}
+
+			dtAStr := "N/A"
+			if res.LabelA.AvgDowntimeMs != nil {
+				dtAStr = fmt.Sprintf("%.1fms", *res.LabelA.AvgDowntimeMs)
+			}
+			dtBStr := "N/A"
+			if res.LabelB.AvgDowntimeMs != nil {
+				dtBStr = fmt.Sprintf("%.1fms", *res.LabelB.AvgDowntimeMs)
+			}
+			dtDiffStr := "N/A"
+			if res.Difference.DowntimeMsDelta != nil {
+				sign := ""
+				if *res.Difference.DowntimeMsDelta > 0 {
+					sign = "+"
+				}
+				dtDiffStr = fmt.Sprintf("%s%.1fms", sign, *res.Difference.DowntimeMsDelta)
+			}
+
 			if compareFormat == "markdown" {
 				if res.Warning != "" {
 					fmt.Printf("> **Warning:** %s\n\n", res.Warning)
@@ -913,6 +947,8 @@ Excessive CPU contention throttled database query processing threads. The safety
 				fmt.Printf("| Avg Recovery Time | %.1fms | %.1fms | %s |\n", res.LabelA.AvgRecoveryMs, res.LabelB.AvgRecoveryMs, recDiffStr)
 				fmt.Printf("| P95 Recovery Time | %s | %s | %s |\n", p95AStr, p95BStr, p95DiffStr)
 				fmt.Printf("| Safety Interventions | %d | %d | %s |\n", res.LabelA.SafetyInterventions, res.LabelB.SafetyInterventions, safetyDiffStr)
+				fmt.Printf("| Avg Availability | %s | %s | %s |\n", availAStr, availBStr, availDiffStr)
+				fmt.Printf("| Avg Downtime | %s | %s | %s |\n", dtAStr, dtBStr, dtDiffStr)
 			} else {
 				if res.Warning != "" {
 					fmt.Printf("\n⚠️  WARNING: %s\n\n", res.Warning)
@@ -933,6 +969,8 @@ Excessive CPU contention throttled database query processing threads. The safety
 				fmt.Printf("%-24s | %-20s | %-20s | %-16s\n", "Avg Recovery Time", fmt.Sprintf("%.1fms", res.LabelA.AvgRecoveryMs), fmt.Sprintf("%.1fms", res.LabelB.AvgRecoveryMs), recDiffStr)
 				fmt.Printf("%-24s | %-20s | %-20s | %-16s\n", "P95 Recovery Time", p95AStr, p95BStr, p95DiffStr)
 				fmt.Printf("%-24s | %-20d | %-20d | %-16s\n", "Safety Interventions", res.LabelA.SafetyInterventions, res.LabelB.SafetyInterventions, safetyDiffStr)
+				fmt.Printf("%-24s | %-20s | %-20s | %-16s\n", "Avg Availability", availAStr, availBStr, availDiffStr)
+				fmt.Printf("%-24s | %-20s | %-20s | %-16s\n", "Avg Downtime", dtAStr, dtBStr, dtDiffStr)
 				fmt.Println("==========================================================================================")
 			}
 

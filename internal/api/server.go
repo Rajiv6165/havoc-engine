@@ -519,6 +519,21 @@ func (s *Server) runExperiment(expID uuid.UUID, req ExperimentRequest, targetKey
 	var probeRes *probe.Result
 	if stopProber != nil {
 		probeRes = stopProber()
+		if probeRes != nil && s.hub != nil {
+			s.hub.Publish(events.Event{
+				ExperimentID: expID.String(),
+				Type:         events.EventProbeResult,
+				Level:        "info",
+				Message:      fmt.Sprintf("[%s] probe result: %.1f%% availability (%d failures, %dms downtime)", expID, probeRes.AvailabilityPercent, probeRes.FailedRequests, probeRes.DowntimeMs),
+				Service:      service,
+				Details: map[string]interface{}{
+					"total_requests":       probeRes.TotalRequests,
+					"failed_requests":      probeRes.FailedRequests,
+					"downtime_ms":          probeRes.DowntimeMs,
+					"availability_percent": probeRes.AvailabilityPercent,
+				},
+			})
+		}
 	}
 
 	// Safety intervention detection

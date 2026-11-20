@@ -14,6 +14,9 @@ export interface ExperimentRecord {
   CreatedAt: string;
   Seeded?: boolean;
   Label?: string | null;
+  ProbeRequests?: number | null;
+  ProbeFailures?: number | null;
+  ProbeDowntimeMs?: number | null;
 }
 
 export default function ExperimentHistoryPanel() {
@@ -141,7 +144,7 @@ export default function ExperimentHistoryPanel() {
                         {exp.CreatedAt ? new Date(exp.CreatedAt).toLocaleTimeString() : ''}
                       </span>
                     </div>
-                    <div className="flex items-center gap-4 text-xs text-zinc-400 pt-1 font-mono">
+                    <div className="flex items-center gap-4 text-xs text-zinc-400 pt-1 font-mono flex-wrap">
                       <span>
                         Recovery:{' '}
                         <span className="text-zinc-200">
@@ -154,6 +157,20 @@ export default function ExperimentHistoryPanel() {
                           {exp.ErrorRatePercent !== null ? `${exp.ErrorRatePercent.toFixed(1)}%` : '0%'}
                         </span>
                       </span>
+                      {exp.ProbeRequests !== undefined && exp.ProbeRequests !== null && exp.ProbeRequests > 0 && (
+                        <span>
+                          Availability:{' '}
+                          <span className="text-emerald-400 font-semibold">
+                            {((exp.ProbeRequests - (exp.ProbeFailures || 0)) / exp.ProbeRequests * 100).toFixed(1)}%
+                          </span>
+                        </span>
+                      )}
+                      {exp.ProbeDowntimeMs !== undefined && exp.ProbeDowntimeMs !== null && exp.ProbeDowntimeMs > 0 && (
+                        <span>
+                          Downtime:{' '}
+                          <span className="text-amber-400 font-semibold">{exp.ProbeDowntimeMs}ms</span>
+                        </span>
+                      )}
                       {exp.SafetyIntervened && (
                         <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/30">
                           Safety Intervened
