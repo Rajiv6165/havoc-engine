@@ -54,22 +54,25 @@ Each test cycle applies one variant, triggers a series of randomized failure inj
 ### Reproduction Commands
 
 ```bash
+# 0. Expose demo API service for active availability probing (in a separate terminal)
+kubectl port-forward svc/api 8080:80 -n demo
+
 # 1. Deploy baseline configuration
 kubectl apply -f deploy/demo/app-baseline.yaml -n demo
 kubectl delete pdb -n demo --all --ignore-not-found
 
-# 2. Run baseline chaos iterations
+# 2. Run baseline chaos iterations with active HTTP probing
 for i in {1..5}; do
-  havoc-engine kill-pod -n demo -s app=frontend --label=baseline
+  havoc-engine kill-pod -n demo -s app=api --label=baseline --probe-url http://localhost:8080/healthz
   sleep 5
 done
 
 # 3. Deploy hardened configuration
 kubectl apply -f deploy/demo/app-hardened.yaml -n demo
 
-# 4. Run hardened chaos iterations
+# 4. Run hardened chaos iterations with active HTTP probing
 for i in {1..5}; do
-  havoc-engine kill-pod -n demo -s app=frontend --label=hardened
+  havoc-engine kill-pod -n demo -s app=api --label=hardened --probe-url http://localhost:8080/healthz
   sleep 5
 done
 
@@ -90,6 +93,8 @@ havoc-engine compare --a=baseline --b=hardened --format=markdown
 | **Avg Recovery Time** | `<!-- TODO: fill from real runs -->` | `<!-- TODO: fill from real runs -->` | `<!-- TODO: fill from real runs -->` |
 | **P95 Recovery Time** | `<!-- TODO: fill from real runs -->` | `<!-- TODO: fill from real runs -->` | `<!-- TODO: fill from real runs -->` |
 | **Safety Interventions** | `<!-- TODO: fill from real runs -->` | `<!-- TODO: fill from real runs -->` | `<!-- TODO: fill from real runs -->` |
+| **Avg Availability** | `<!-- TODO: fill from real runs -->` | `<!-- TODO: fill from real runs -->` | `<!-- TODO: fill from real runs -->` |
+| **Avg Downtime** | `<!-- TODO: fill from real runs -->` | `<!-- TODO: fill from real runs -->` | `<!-- TODO: fill from real runs -->` |
 
 *(Note: P95 recovery times are computed when 5 or more runs exist per label.)*
 
@@ -127,5 +132,6 @@ To transition from the fragile baseline to the resilient hardened architecture, 
    A minimum of 3 runs is enforced by Havoc Engine before presenting comparison summaries, with 5+ runs required for P95 percentiles. Statistical significance increases with sample size (recommended: 10–20 iterations per test).
 2. **Local Cluster vs. Production Cloud**:
    Local environments (e.g. Minikube / K3d / single-node K3s) share physical node resources and kernel schedulers. Multi-zone cloud clusters (EKS / GKE) introduce realistic cross-AZ network latencies and VM provisioning delays.
-3. **Pod Readiness vs. User Downtime**:
-   Recovery time is measured from Kubernetes Watch stream events until the container satisfies `Ready=True`. This measures infrastructure recovery time rather than end-to-end client-side request draining or CDN edge retry dynamics.
+3. **Pod Readiness vs. User Downtime & Availability Probing**:
+   - **Recovery Time**: Measured from Kubernetes Watch stream events until the container satisfies `Ready=True`. This measures infrastructure recovery and scheduler readiness rather than end-to-end client-side request draining or CDN edge retry dynamics.
+   - **Availability Measurement**: Availability and downtime are recorded by an active external HTTP Prober issuing GET requests every 250ms with a 1s timeout from outside the cluster. While this provides concrete downtime metrics without relying on synthetic mocks, it reflects synthetic probing rather than organic user traffic patterns.

@@ -56,10 +56,10 @@ Every chaos experiment follows an end-to-end lifecycle designed for safety, prec
    - `inject-latency`: Attaches an ephemeral debug container with `tc netem` network delay.
    - `spike-cpu`: Attaches an ephemeral container running `stress-ng`.
 4. **Recovery Watch**: The engine synchronously watches the Kubernetes Watch stream until the pod or container recovers to a `Ready` condition, measuring exact recovery duration in milliseconds.
-5. **Score**: Calculates a resilience score ($0-100$) based on recovery time, observed error rate, and whether safety interventions were triggered.
-6. **Storage**: Persists the experiment record, recovery duration, error metrics, and score in PostgreSQL.
+5. **Score**: Calculates a resilience score ($0-100$) based on recovery time, observed error rate, and whether safety interventions were triggered. When an active availability probe is provided (`--probe-url`, YAML `probe.url`, or API `probeUrl`), the measured HTTP failure percentage ($\text{failures} / \text{total} \times 100$) is used as the error rate input, and observed downtime milliseconds are recorded. If no probe URL is supplied, the engine queries Prometheus for the namespace error rate as fallback. Stored results and logs explicitly state which source was used.
+6. **Storage**: Persists the experiment record, recovery duration, error metrics, availability metrics (total requests, failures, downtime), and score in PostgreSQL.
 7. **Postmortem**: If `ANTHROPIC_API_KEY` is provided, Claude analyzes the incident data and drafts an automated postmortem report.
-8. **Live Events**: Real-time lifecycle events (`experiment_started`, `target_selected`, `pod_killed`, `recovering`, `recovered`, `completed`, `blocked`, `aborted`) are broadcast over WebSocket (:9091) to animate the dashboard topology and event log.
+8. **Live Events**: Real-time lifecycle events (`experiment_started`, `target_selected`, `pod_killed`, `recovering`, `recovered`, `completed`, `blocked`, `aborted`, `probe_result`) are broadcast over WebSocket (:9091) to animate the dashboard topology and event log.
 
 ---
 
@@ -119,13 +119,16 @@ Validate how architectural hardening directly improves real-world recovery and r
 
 👉 **Read the full case study & methodology**: [docs/CASE_STUDY.md](docs/CASE_STUDY.md)
 
-Run your own before/after comparison across experiment labels:
+Run your own before/after comparison across experiment labels with active availability probing:
 ```bash
-# Tag chaos runs with a label
-havoc-engine kill-pod -n demo -s app=frontend --label=baseline
-havoc-engine kill-pod -n demo -s app=frontend --label=hardened
+# Expose the demo API service (e.g. port 8080)
+kubectl port-forward svc/api 8080:80 -n demo
 
-# Output side-by-side comparison table
+# Tag chaos runs with a label and measure real availability
+havoc-engine kill-pod -n demo -s app=api --label=baseline --probe-url http://localhost:8080/healthz
+havoc-engine kill-pod -n demo -s app=api --label=hardened --probe-url http://localhost:8080/healthz
+
+# Output side-by-side comparison table (scores, recovery time, availability, downtime)
 havoc-engine compare --a=baseline --b=hardened --format=markdown
 ```
 
@@ -160,7 +163,7 @@ havoc-engine compare --a=baseline --b=hardened --format=markdown
 - **Kubernetes Ephemeral Containers**: Network latency injection (`inject-latency`) and CPU stress (`spike-cpu`) require ephemeral container support in the target cluster (enabled by default in Kubernetes 1.25+). Pod termination (`kill-pod`) works on all standard Kubernetes clusters.
 - **Single-Cluster Scope**: The engine connects to a single Kubernetes cluster per instance via standard `kubeconfig` or in-cluster service account.
 - **Simple Bearer Token Authentication**: API authentication uses a shared bearer token (`HAVOC_API_TOKEN`) rather than multi-tenant OAuth2/OIDC or per-user RBAC.
-- **Error Rate Metrics**: Auto-abort thresholds query aggregate error rates from Prometheus (`prometheus.url`) rather than in-band distributed tracing spans.
+- **Error Rate Metrics & Availability Measurement**: Active availability and downtime are sampled by an external HTTP prober (GET requests every 250ms with a 1s timeout) targeting a user-specified URL, rather than organic user traffic. When no probe target is configured, auto-abort thresholds and scoring fall back to aggregate Prometheus error rates (`prometheus.url`). Recovery times reflect Kubernetes control plane readiness (`Ready=True`).
 
 ---
 
@@ -199,13 +202,13 @@ Havoc Engine incorporates defensive safeguards to protect cluster stability and 
 - `havoc-engine seed-demo`: Populates the database with realistic baseline experiments, scores, and AI postmortems (persisted with a `seeded` flag and displayed with a `sample data` badge in the dashboard history), and tests live cluster connectivity.
 
 ### Chaos Actions
-- `havoc-engine kill-pod --namespace <ns> --selector <label> [--label <variant>]`: Deletes a random pod matching the label selector.
-- `havoc-engine inject-latency --namespace <ns> --pod <name> --delay <ms> [--label <variant>]`: Injects network delay using `tc`/`netem` via an ephemeral container.
-- `havoc-engine spike-cpu --namespace <ns> --pod <name> --duration <s> [--label <variant>]`: Stresses CPU inside a target pod using a `stress-ng` ephemeral container.
+- `havoc-engine kill-pod --namespace <ns> --selector <label> [--label <variant>] [--probe-url <url>]`: Deletes a random pod matching the label selector with optional active HTTP availability probing.
+- `havoc-engine inject-latency --namespace <ns> --pod <name> --delay <ms> [--label <variant>] [--probe-url <url>]`: Injects network delay using `tc`/`netem` via an ephemeral container with optional active HTTP availability probing.
+- `havoc-engine spike-cpu --namespace <ns> --pod <name> --duration <s> [--label <variant>] [--probe-url <url>]`: Stresses CPU inside a target pod using a `stress-ng` ephemeral container with optional active HTTP availability probing.
 
 ### Experiment Management
-- `havoc-engine run --file <path/to/experiment.yaml> [--label <variant>]`: Run a complex experiment from a YAML definition file.
-- `havoc-engine compare --a <label> --b <label> [--action <type>] [--format table|markdown]`: Compares resilience scores, recovery times, P95, and safety interventions across two experiment labels.
+- `havoc-engine run --file <path/to/experiment.yaml> [--label <variant>] [--probe-url <url>]`: Run a complex experiment from a YAML definition file (supports `probe.url` in schema or `--probe-url` CLI flag).
+- `havoc-engine compare --a <label> --b <label> [--action <type>] [--format table|markdown]`: Compares resilience scores, recovery times, P95, safety interventions, average availability, and observed downtime across two experiment labels.
 - `havoc-engine history`: View recent chaos experiment history and their resilience scores.
 - `havoc-engine score`: Calculate and print the current average resilience score and trend.
 - `havoc-engine report --latest` (or `--id <uuid>`): View or generate an AI postmortem report for an experiment.
