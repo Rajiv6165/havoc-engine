@@ -2,6 +2,7 @@ package experimentdef
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -17,6 +18,12 @@ type Experiment struct {
 	Params      Params `yaml:"params,omitempty"`
 	Safety      Safety `yaml:"safety,omitempty"`
 	Schedule    string `yaml:"schedule,omitempty"`
+	Probe       Probe  `yaml:"probe,omitempty"`
+}
+
+// Probe defines the active health/availability probing configuration for an experiment.
+type Probe struct {
+	URL string `yaml:"url,omitempty"`
 }
 
 // Target defines where the experiment should be applied.
@@ -67,6 +74,12 @@ func (e *Experiment) Validate() error {
 	}
 	if len(e.Label) > 40 {
 		return fmt.Errorf("label exceeds maximum length of 40 characters")
+	}
+	if e.Probe.URL != "" {
+		u, err := url.ParseRequestURI(e.Probe.URL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("probe.url must be a valid http or https URL")
+		}
 	}
 	if e.Target.Namespace == "" {
 		return fmt.Errorf("missing required field: target.namespace")

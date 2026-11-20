@@ -61,6 +61,34 @@ func TestValidate_Valid(t *testing.T) {
 				Action: ActionKillPod,
 			},
 		},
+		{
+			name: "valid kill-pod with http probe",
+			exp: Experiment{
+				Name: "test-kill-probe-http",
+				Target: Target{
+					Namespace:     "default",
+					LabelSelector: "app=demo",
+				},
+				Action: ActionKillPod,
+				Probe: Probe{
+					URL: "http://localhost:8080/healthz",
+				},
+			},
+		},
+		{
+			name: "valid kill-pod with https probe",
+			exp: Experiment{
+				Name: "test-kill-probe-https",
+				Target: Target{
+					Namespace:     "default",
+					LabelSelector: "app=demo",
+				},
+				Action: ActionKillPod,
+				Probe: Probe{
+					URL: "https://demo.example.com/api/status",
+				},
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -200,6 +228,36 @@ func TestValidate_Invalid(t *testing.T) {
 				Action: ActionKillPod,
 			},
 			errContains: "label exceeds maximum length of 40 characters",
+		},
+		{
+			name: "invalid probe url scheme",
+			exp: Experiment{
+				Name: "test-probe-ftp",
+				Target: Target{
+					Namespace:     "default",
+					LabelSelector: "app=demo",
+				},
+				Action: ActionKillPod,
+				Probe: Probe{
+					URL: "ftp://example.com/file",
+				},
+			},
+			errContains: "probe.url must be a valid http or https URL",
+		},
+		{
+			name: "invalid probe url format",
+			exp: Experiment{
+				Name: "test-probe-invalid",
+				Target: Target{
+					Namespace:     "default",
+					LabelSelector: "app=demo",
+				},
+				Action: ActionKillPod,
+				Probe: Probe{
+					URL: "not-a-valid-url",
+				},
+			},
+			errContains: "probe.url must be a valid http or https URL",
 		},
 	}
 

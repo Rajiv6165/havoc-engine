@@ -296,6 +296,13 @@ func TestAPI_PostExperiments(t *testing.T) {
 				Labels:    map[string]string{"app": "frontend"},
 			},
 		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "api-xyz",
+				Namespace: "default",
+				Labels:    map[string]string{"app": "api"},
+			},
+		},
 	)
 
 	cfg := &config.Config{
@@ -339,6 +346,38 @@ func TestAPI_PostExperiments(t *testing.T) {
 	idStr, ok := resp["id"].(string)
 	if !ok || idStr == "" {
 		t.Errorf("expected valid id string in response")
+	}
+
+	// Test with valid probeUrl
+	validProbePayload := ExperimentRequest{
+		Action:    "kill-pod",
+		Namespace: "default",
+		Selector:  "app=api",
+		ProbeURL:  "http://localhost:8080/healthz",
+	}
+	body, _ = json.Marshal(validProbePayload)
+	req = httptest.NewRequest(http.MethodPost, "/api/experiments", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202 with valid probeUrl, got %d", w.Code)
+	}
+
+	// Test with invalid probeUrl
+	invalidProbePayload := ExperimentRequest{
+		Action:    "kill-pod",
+		Namespace: "default",
+		Selector:  "app=frontend",
+		ProbeURL:  "ftp://invalid-url",
+	}
+	body, _ = json.Marshal(invalidProbePayload)
+	req = httptest.NewRequest(http.MethodPost, "/api/experiments", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 with invalid probeUrl, got %d", w.Code)
 	}
 }
 

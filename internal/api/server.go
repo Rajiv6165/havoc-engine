@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -284,6 +285,7 @@ type ExperimentRequest struct {
 	Pod       string           `json:"pod"`
 	Params    ExperimentParams `json:"params"`
 	Label     *string          `json:"label,omitempty"`
+	ProbeURL  string           `json:"probeUrl,omitempty"`
 }
 
 type ExperimentParams struct {
@@ -328,6 +330,16 @@ func (s *Server) handlePostExperiments(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "label exceeds maximum length of 40 characters"})
 		return
+	}
+
+	if req.ProbeURL != "" {
+		u, err := url.ParseRequestURI(req.ProbeURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "probeUrl must be a valid http or https URL"})
+			return
+		}
 	}
 
 	if req.Namespace == "" {

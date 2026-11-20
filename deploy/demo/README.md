@@ -46,3 +46,32 @@ Check running pods, replica counts, and active disruption budgets:
 ```bash
 kubectl get pods,deployments,pdb -n demo
 ```
+
+---
+
+## Measuring Real Availability via Probing
+
+To measure HTTP availability and downtime during chaos experiments, expose the demo `api` (or `frontend`) service:
+
+### Option A: Port-forwarding (Recommended for local clusters)
+Forward the `api` service to your local machine:
+```bash
+kubectl port-forward svc/api 8080:80 -n demo
+```
+
+Then supply `--probe-url` to any experiment command:
+```bash
+# Example kill-pod experiment with active HTTP availability probing
+havoc-engine kill-pod -s app=api -n demo --probe-url http://localhost:8080/healthz --label baseline
+```
+
+### Option B: NodePort
+If your cluster node port is accessible:
+```bash
+# Look up the NodePort assigned to the service
+kubectl get svc api -n demo
+
+# Target the node's external address and assigned port
+havoc-engine kill-pod -s app=api -n demo --probe-url http://<NODE_IP>:<NODE_PORT>/healthz --label hardened
+```
+

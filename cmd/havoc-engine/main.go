@@ -44,7 +44,10 @@ func main() {
 	rootCmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "", "Kubernetes namespace (defaults to config default_namespace)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Simulate execution without making actual changes")
 
-	var experimentLabel string
+	var (
+		experimentLabel string
+		probeURL        string
+	)
 
 	// kill-pod command
 	var selector string
@@ -83,6 +86,7 @@ func main() {
 	}
 	killPodCmd.Flags().StringVarP(&selector, "selector", "s", "", "Label selector (e.g. app=demo)")
 	killPodCmd.Flags().StringVar(&experimentLabel, "label", "", "Optional experiment label (e.g. baseline, hardened)")
+	killPodCmd.Flags().StringVar(&probeURL, "probe-url", "", "Optional HTTP/HTTPS target URL to probe availability during the experiment")
 	_ = killPodCmd.MarkFlagRequired("selector")
 
 	// inject-latency command
@@ -126,6 +130,7 @@ func main() {
 	injectLatencyCmd.Flags().StringVarP(&podName, "pod", "p", "", "Target pod name")
 	injectLatencyCmd.Flags().IntVarP(&delayMs, "delay", "d", 0, "Delay duration in milliseconds")
 	injectLatencyCmd.Flags().StringVar(&experimentLabel, "label", "", "Optional experiment label (e.g. baseline, hardened)")
+	injectLatencyCmd.Flags().StringVar(&probeURL, "probe-url", "", "Optional HTTP/HTTPS target URL to probe availability during the experiment")
 	_ = injectLatencyCmd.MarkFlagRequired("pod")
 	_ = injectLatencyCmd.MarkFlagRequired("delay")
 
@@ -167,6 +172,7 @@ func main() {
 	spikeCPUCmd.Flags().StringVarP(&podName, "pod", "p", "", "Target pod name")
 	spikeCPUCmd.Flags().IntVarP(&durationSec, "duration", "t", 0, "Stress duration in seconds")
 	spikeCPUCmd.Flags().StringVar(&experimentLabel, "label", "", "Optional experiment label (e.g. baseline, hardened)")
+	spikeCPUCmd.Flags().StringVar(&probeURL, "probe-url", "", "Optional HTTP/HTTPS target URL to probe availability during the experiment")
 	_ = spikeCPUCmd.MarkFlagRequired("pod")
 	_ = spikeCPUCmd.MarkFlagRequired("duration")
 
@@ -333,6 +339,12 @@ func main() {
 				effectiveLabel = experimentLabel
 			}
 
+			effectiveProbeURL := exp.Probe.URL
+			if probeURL != "" {
+				effectiveProbeURL = probeURL
+			}
+			_ = effectiveProbeURL
+
 			if !dryRun {
 				recordExperiment(cfg, exp.Action, exp.Target.Namespace, recoveryTimeMs, expErr, effectiveLabel)
 			}
@@ -345,6 +357,7 @@ func main() {
 	}
 	runCmd.Flags().StringVarP(&file, "file", "f", "", "Path to experiment YAML file")
 	runCmd.Flags().StringVar(&experimentLabel, "label", "", "Optional experiment label (e.g. baseline, hardened)")
+	runCmd.Flags().StringVar(&probeURL, "probe-url", "", "Optional HTTP/HTTPS target URL to probe availability during the experiment (overrides YAML probe.url)")
 	_ = runCmd.MarkFlagRequired("file")
 
 	// history command
