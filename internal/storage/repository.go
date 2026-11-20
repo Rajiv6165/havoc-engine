@@ -30,6 +30,9 @@ type ExperimentResult struct {
 	CreatedAt        time.Time
 	Seeded           bool
 	Label            *string
+	ProbeRequests    *int
+	ProbeFailures    *int
+	ProbeDowntimeMs  *int
 }
 
 // ScheduledRun represents an execution attempt by the scheduler.
@@ -77,9 +80,10 @@ func (r *PostgresRepository) SaveExperimentResult(ctx context.Context, result *E
 	query := `
 		INSERT INTO experiments (
 			id, experiment_type, target_namespace, recovery_time_ms, 
-			error_rate_percent, safety_intervened, resilience_score, postmortem_report, created_at, seeded, label
+			error_rate_percent, safety_intervened, resilience_score, postmortem_report, created_at, seeded, label,
+			probe_requests, probe_failures, probe_downtime_ms
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 		)
 	`
 	_, err := r.db.ExecContext(ctx, query,
@@ -94,6 +98,9 @@ func (r *PostgresRepository) SaveExperimentResult(ctx context.Context, result *E
 		result.CreatedAt,
 		result.Seeded,
 		result.Label,
+		result.ProbeRequests,
+		result.ProbeFailures,
+		result.ProbeDowntimeMs,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert experiment result: %w", err)
@@ -105,7 +112,8 @@ func (r *PostgresRepository) SaveExperimentResult(ctx context.Context, result *E
 func (r *PostgresRepository) GetRecentExperiments(ctx context.Context, limit int) ([]ExperimentResult, error) {
 	query := `
 		SELECT id, experiment_type, target_namespace, recovery_time_ms, 
-		       error_rate_percent, safety_intervened, resilience_score, postmortem_report, created_at, seeded, label
+		       error_rate_percent, safety_intervened, resilience_score, postmortem_report, created_at, seeded, label,
+		       probe_requests, probe_failures, probe_downtime_ms
 		FROM experiments
 		ORDER BY created_at DESC
 		LIMIT $1
@@ -131,6 +139,9 @@ func (r *PostgresRepository) GetRecentExperiments(ctx context.Context, limit int
 			&res.CreatedAt,
 			&res.Seeded,
 			&res.Label,
+			&res.ProbeRequests,
+			&res.ProbeFailures,
+			&res.ProbeDowntimeMs,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan experiment result: %w", err)

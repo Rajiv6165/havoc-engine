@@ -38,7 +38,8 @@ type ComparisonResult struct {
 func (r *PostgresRepository) GetExperimentsByLabel(ctx context.Context, label string, action string) ([]ExperimentResult, error) {
 	query := `
 		SELECT id, experiment_type, target_namespace, recovery_time_ms, 
-		       error_rate_percent, safety_intervened, resilience_score, postmortem_report, created_at, seeded, label
+		       error_rate_percent, safety_intervened, resilience_score, postmortem_report, created_at, seeded, label,
+		       probe_requests, probe_failures, probe_downtime_ms
 		FROM experiments
 		WHERE seeded = FALSE AND label = $1
 	`
@@ -72,6 +73,9 @@ func (r *PostgresRepository) GetExperimentsByLabel(ctx context.Context, label st
 			&res.CreatedAt,
 			&res.Seeded,
 			&res.Label,
+			&res.ProbeRequests,
+			&res.ProbeFailures,
+			&res.ProbeDowntimeMs,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan experiment row: %w", err)
 		}

@@ -104,6 +104,9 @@ func TestSaveAndFetchExperimentResults(t *testing.T) {
 	errRate1 := 1.25
 	report1 := "Sample postmortem report for live run"
 	label1 := "baseline"
+	probeReq1 := 48
+	probeFail1 := 4
+	probeDown1 := 1000
 	liveExp := &ExperimentResult{
 		ID:               uuid.New(),
 		ExperimentType:   "kill-pod",
@@ -116,6 +119,9 @@ func TestSaveAndFetchExperimentResults(t *testing.T) {
 		CreatedAt:        now.Add(-2 * time.Minute),
 		Seeded:           false,
 		Label:            &label1,
+		ProbeRequests:    &probeReq1,
+		ProbeFailures:    &probeFail1,
+		ProbeDowntimeMs:  &probeDown1,
 	}
 
 	recTime2 := 4500
@@ -179,9 +185,21 @@ func TestSaveAndFetchExperimentResults(t *testing.T) {
 	if foundLive.Label == nil || *foundLive.Label != label1 {
 		t.Errorf("expected liveExp.Label to be %q, got %v", label1, foundLive.Label)
 	}
+	if foundLive.ProbeRequests == nil || *foundLive.ProbeRequests != probeReq1 {
+		t.Errorf("expected liveExp.ProbeRequests to be %d, got %v", probeReq1, foundLive.ProbeRequests)
+	}
+	if foundLive.ProbeFailures == nil || *foundLive.ProbeFailures != probeFail1 {
+		t.Errorf("expected liveExp.ProbeFailures to be %d, got %v", probeFail1, foundLive.ProbeFailures)
+	}
+	if foundLive.ProbeDowntimeMs == nil || *foundLive.ProbeDowntimeMs != probeDown1 {
+		t.Errorf("expected liveExp.ProbeDowntimeMs to be %d, got %v", probeDown1, foundLive.ProbeDowntimeMs)
+	}
 
 	if foundSeeded == nil {
 		t.Fatalf("seeded experiment with ID %s not found in recent experiments", seededExp.ID)
+	}
+	if foundSeeded.ProbeRequests != nil {
+		t.Errorf("expected seededExp.ProbeRequests to be nil, got %v", *foundSeeded.ProbeRequests)
 	}
 	if foundSeeded.Label != nil {
 		t.Errorf("expected seededExp.Label to be nil, got %v", *foundSeeded.Label)
