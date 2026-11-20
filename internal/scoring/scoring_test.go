@@ -67,6 +67,27 @@ func TestCalculateResilienceScore(t *testing.T) {
 			safetyIntervened: false,
 			expectedScore:    100,
 		},
+		{
+			name:             "Probe error rate (0% failures over 100 requests)",
+			recoveryTimeMs:   ptr(2000),
+			errorRate:        0.0, // 0/100 * 100%
+			safetyIntervened: false,
+			expectedScore:    100,
+		},
+		{
+			name:             "Probe error rate (10% failures over 100 requests)",
+			recoveryTimeMs:   ptr(2000),
+			errorRate:        10.0, // 10/100 * 100% -> 30pt penalty
+			safetyIntervened: false,
+			expectedScore:    70,
+		},
+		{
+			name:             "Probe error rate (5.5% failures over 200 requests)",
+			recoveryTimeMs:   ptr(5000),
+			errorRate:        5.5, // 11/200 * 100% -> 15pt penalty
+			safetyIntervened: false,
+			expectedScore:    85,
+		},
 	}
 
 	for _, tc := range tests {

@@ -22,6 +22,7 @@ import (
 	"havoc-engine/internal/k8sclient"
 	"havoc-engine/internal/metrics"
 	"havoc-engine/internal/postmortem"
+	"havoc-engine/internal/probe"
 	"havoc-engine/internal/safety"
 	"havoc-engine/internal/scheduler"
 	"havoc-engine/internal/scoring"
@@ -66,12 +67,23 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
+			var stopProber func() *probe.Result
+			if probeURL != "" && !dryRun {
+				p := probe.NewProber(probe.Config{URL: probeURL})
+				stopProber = p.Start(context.Background())
+			}
+
 			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL), cfg.Safety.AllowedNamespaces)
 			deletedPod, recoveryTimeMs, err := runner.ExecuteKillPod(context.Background(), ns, selector)
 			
+			var probeRes *probe.Result
+			if stopProber != nil {
+				probeRes = stopProber()
+			}
+
 			// Scoring & Storage logic
 			if !dryRun {
-				recordExperiment(cfg, "kill-pod", ns, recoveryTimeMs, err, experimentLabel)
+				recordExperiment(cfg, "kill-pod", ns, recoveryTimeMs, err, experimentLabel, probeRes)
 			}
 
 			if err != nil {
@@ -109,12 +121,23 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
+			var stopProber func() *probe.Result
+			if probeURL != "" && !dryRun {
+				p := probe.NewProber(probe.Config{URL: probeURL})
+				stopProber = p.Start(context.Background())
+			}
+
 			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL), cfg.Safety.AllowedNamespaces)
 			recoveryTimeMs, err := runner.ExecuteInjectLatency(context.Background(), ns, podName, delayMs)
 			
+			var probeRes *probe.Result
+			if stopProber != nil {
+				probeRes = stopProber()
+			}
+
 			// Scoring & Storage logic
 			if !dryRun {
-				recordExperiment(cfg, "inject-latency", ns, recoveryTimeMs, err, experimentLabel)
+				recordExperiment(cfg, "inject-latency", ns, recoveryTimeMs, err, experimentLabel, probeRes)
 			}
 
 			if err != nil {
@@ -151,12 +174,23 @@ func main() {
 				return fmt.Errorf("failed to create k8s client: %w", err)
 			}
 
+			var stopProber func() *probe.Result
+			if probeURL != "" && !dryRun {
+				p := probe.NewProber(probe.Config{URL: probeURL})
+				stopProber = p.Start(context.Background())
+			}
+
 			runner := safety.NewSafetyRunner(client, cfg.MaxBlastRadiusPercent, cfg.AbortOnErrorRatePercent, dryRun, metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL), cfg.Safety.AllowedNamespaces)
 			recoveryTimeMs, err := runner.ExecuteSpikeCPU(context.Background(), ns, podName, durationSec)
 			
+			var probeRes *probe.Result
+			if stopProber != nil {
+				probeRes = stopProber()
+			}
+
 			// Scoring & Storage logic
 			if !dryRun {
-				recordExperiment(cfg, "spike-cpu", ns, recoveryTimeMs, err, experimentLabel)
+				recordExperiment(cfg, "spike-cpu", ns, recoveryTimeMs, err, experimentLabel, probeRes)
 			}
 
 			if err != nil {
@@ -316,6 +350,17 @@ func main() {
 			var recoveryTimeMs *int
 			var deletedPod string
 
+			effectiveProbeURL := exp.Probe.URL
+			if probeURL != "" {
+				effectiveProbeURL = probeURL
+			}
+
+			var stopProber func() *probe.Result
+			if effectiveProbeURL != "" && !dryRun {
+				p := probe.NewProber(probe.Config{URL: effectiveProbeURL})
+				stopProber = p.Start(context.Background())
+			}
+
 			switch exp.Action {
 			case experimentdef.ActionKillPod:
 				deletedPod, recoveryTimeMs, expErr = runner.ExecuteKillPod(context.Background(), exp.Target.Namespace, exp.Target.LabelSelector)
@@ -334,19 +379,18 @@ func main() {
 				}
 			}
 
+			var probeRes *probe.Result
+			if stopProber != nil {
+				probeRes = stopProber()
+			}
+
 			effectiveLabel := exp.Label
 			if experimentLabel != "" {
 				effectiveLabel = experimentLabel
 			}
 
-			effectiveProbeURL := exp.Probe.URL
-			if probeURL != "" {
-				effectiveProbeURL = probeURL
-			}
-			_ = effectiveProbeURL
-
 			if !dryRun {
-				recordExperiment(cfg, exp.Action, exp.Target.Namespace, recoveryTimeMs, expErr, effectiveLabel)
+				recordExperiment(cfg, exp.Action, exp.Target.Namespace, recoveryTimeMs, expErr, effectiveLabel, probeRes)
 			}
 
 			if expErr != nil {
@@ -909,7 +953,7 @@ Excessive CPU contention throttled database query processing threads. The safety
 	}
 }
 
-func recordExperiment(cfg *config.Config, expType, namespace string, recoveryTimeMs *int, expErr error, label string) {
+func recordExperiment(cfg *config.Config, expType, namespace string, recoveryTimeMs *int, expErr error, label string, probeRes *probe.Result) {
 	// Initialize repository
 	repo, err := storage.NewPostgresRepository(cfg.DatabaseDSN)
 	if err != nil {
@@ -929,12 +973,25 @@ func recordExperiment(cfg *config.Config, expType, namespace string, recoveryTim
 		safetyIntervened = true
 	}
 
-	// For error rate, we'd ideally query the prometheus backend, but since this is CLI-driven,
-	// let's grab the current error rate from our real metrics checker.
-	checker := metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL)
-	var errRate *float64
-	if rate, err := checker.GetErrorRate(context.Background(), namespace); err == nil {
-		errRate = &rate
+	// Error rate calculation (measured probe failure percentage if available, otherwise Prometheus)
+	var (
+		errRate         *float64
+		probeRequests   *int
+		probeFailures   *int
+		probeDowntimeMs *int
+	)
+
+	if probeRes != nil && probeRes.TotalRequests > 0 {
+		probeRequests = &probeRes.TotalRequests
+		probeFailures = &probeRes.FailedRequests
+		probeDowntimeMs = &probeRes.DowntimeMs
+		failRate := (float64(probeRes.FailedRequests) / float64(probeRes.TotalRequests)) * 100.0
+		errRate = &failRate
+	} else {
+		checker := metrics.NewPrometheusMetricsChecker(cfg.Prometheus.URL)
+		if rate, err := checker.GetErrorRate(context.Background(), namespace); err == nil {
+			errRate = &rate
+		}
 	}
 
 	var errorRateVal float64
@@ -989,12 +1046,19 @@ func recordExperiment(cfg *config.Config, expType, namespace string, recoveryTim
 		PostmortemReport: reportTextPtr,
 		CreatedAt:        time.Now(),
 		Label:            labelPtr,
+		ProbeRequests:    probeRequests,
+		ProbeFailures:    probeFailures,
+		ProbeDowntimeMs:  probeDowntimeMs,
 	}
 
 	if err := repo.SaveExperimentResult(context.Background(), res); err != nil {
 		fmt.Printf("Warning: failed to save experiment result: %v\n", err)
 	} else {
-		fmt.Printf("Recorded experiment result: Resilience Score %d/100\n", score)
+		if probeRes != nil && probeRes.TotalRequests > 0 {
+			fmt.Printf("Recorded experiment result: Resilience Score %d/100 (Availability: %.1f%%, Downtime: %dms via probe)\n", score, probeRes.AvailabilityPercent, probeRes.DowntimeMs)
+		} else {
+			fmt.Printf("Recorded experiment result: Resilience Score %d/100 (Error rate via Prometheus)\n", score)
+		}
 	}
 }
 

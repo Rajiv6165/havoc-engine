@@ -20,6 +20,7 @@ import (
 	"havoc-engine/internal/events"
 	"havoc-engine/internal/metrics"
 	"havoc-engine/internal/postmortem"
+	"havoc-engine/internal/probe"
 	"havoc-engine/internal/safety"
 	"havoc-engine/internal/scoring"
 	"havoc-engine/internal/storage"
@@ -460,6 +461,12 @@ func (s *Server) runExperiment(expID uuid.UUID, req ExperimentRequest, targetKey
 
 	ctx := safety.WithExperimentContext(context.Background(), expID.String(), service)
 
+	var stopProber func() *probe.Result
+	if req.ProbeURL != "" {
+		p := probe.NewProber(probe.Config{URL: req.ProbeURL})
+		stopProber = p.Start(ctx)
+	}
+
 	var (
 		deletedPod     string
 		recoveryTimeMs *int
@@ -509,15 +516,31 @@ func (s *Server) runExperiment(expID uuid.UUID, req ExperimentRequest, targetKey
 		recoveryTimeMs, expErr = runner.ExecuteSpikeCPU(ctx, req.Namespace, targetPod, duration)
 	}
 
+	var probeRes *probe.Result
+	if stopProber != nil {
+		probeRes = stopProber()
+	}
+
 	// Safety intervention detection
 	safetyIntervened := false
 	if expErr != nil && strings.Contains(expErr.Error(), "auto-abort triggered") {
 		safetyIntervened = true
 	}
 
-	// Metrics error rate
-	var errRate *float64
-	if s.metricsChecker != nil {
+	// Error rate calculation (measured probe failure percentage if available, otherwise Prometheus)
+	var (
+		errRate         *float64
+		probeRequests   *int
+		probeFailures   *int
+		probeDowntimeMs *int
+	)
+	if probeRes != nil && probeRes.TotalRequests > 0 {
+		probeRequests = &probeRes.TotalRequests
+		probeFailures = &probeRes.FailedRequests
+		probeDowntimeMs = &probeRes.DowntimeMs
+		failRate := (float64(probeRes.FailedRequests) / float64(probeRes.TotalRequests)) * 100.0
+		errRate = &failRate
+	} else if s.metricsChecker != nil {
 		if rate, err := s.metricsChecker.GetErrorRate(ctx, req.Namespace); err == nil {
 			errRate = &rate
 		}
@@ -567,6 +590,9 @@ func (s *Server) runExperiment(expID uuid.UUID, req ExperimentRequest, targetKey
 			PostmortemReport: reportTextPtr,
 			CreatedAt:        time.Now(),
 			Label:            labelPtr,
+			ProbeRequests:    probeRequests,
+			ProbeFailures:    probeFailures,
+			ProbeDowntimeMs:  probeDowntimeMs,
 		}
 		_ = s.repo.SaveExperimentResult(ctx, res)
 	}
